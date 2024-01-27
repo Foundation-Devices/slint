@@ -19,6 +19,9 @@ categories = ["gui", "development-tools", "no-std"]
 path = "lib.rs"
 
 [features]
+simd = [] # Use SIMD for software renderer
+simd-stat = [] # Track SIMD usage statistics
+
 ffi = [] # Expose C ABI
 libm = ["num-traits/libm", "euclid/libm"]
 # Allow the viewer to query at runtime information about item types

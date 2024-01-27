@@ -154,6 +154,10 @@ backend-linuxkms = ["i-slint-backend-selector/backend-linuxkms", "std"]
 ## windowing system. (Experimental)
 backend-linuxkms-noseat = ["i-slint-backend-selector/backend-linuxkms-noseat", "std"]
 
+# Enable NEON SIMD in software renderer (ARMv7-A only)
+simd = ["i-slint-core/simd"]
+simd-stat = ["i-slint-core/simd-stat"]
+
 [dependencies]
 i-slint-core = { workspace = true }
 slint-macros = { workspace = true, features = ["default"] }
