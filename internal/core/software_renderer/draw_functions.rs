@@ -13,6 +13,21 @@ use crate::Color;
 use derive_more::{Add, Mul, Sub};
 use integer_sqrt::IntegerSquareRoot;
 
+#[cfg(feature = "simd-stat")]
+use core::sync::atomic::{AtomicU32, Ordering};
+#[cfg(feature = "simd-stat")]
+pub static BLEND_NUM: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "simd-stat")]
+pub static PREMULTIPLY_NUM: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "simd-stat")]
+pub static SIMD_NUM: AtomicU32 = AtomicU32::new(0);
+#[cfg(feature = "simd-stat")]
+pub static mut FORMAT_HIST: [usize; 4] = [0; 4];
+#[cfg(feature = "simd-stat")]
+pub static mut SIMD_HIST: [usize; 4] = [0; 4];
+#[cfg(feature = "simd-stat")]
+pub static mut AMAP_HIST: [usize; 32] = [0; 32];
+
 /// Draw one line of the texture in the line buffer
 pub(super) fn draw_texture_line(
     span: &PhysicalRect,
@@ -85,17 +100,71 @@ pub(super) fn draw_texture_line(
         color: Color,
         mut pos: impl FnMut(usize) -> usize,
     ) {
+        #[cfg(feature = "simd-stat")]
+        unsafe {
+            FORMAT_HIST[format as usize] += 1;
+        }
+        #[cfg(feature = "simd-stat")]
+        let mut had_simd_op = false;
+
         match format {
             PixelFormat::Rgb => {
-                for pix in line_buffer {
-                    let pos = pos(3);
-                    let p = &data[pos..pos + 3];
-                    if alpha == 0xff {
-                        *pix = TargetPixel::from_rgb(p[0], p[1], p[2]);
-                    } else {
-                        pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                            alpha, p[0], p[1], p[2],
-                        )))
+                #[cfg(all(target_arch = "arm", feature = "simd"))]
+                {
+                    const VECTOR_SIZE_BYTES: usize = 16;
+                    const FG_DATA_SIZE_BYTES: usize = 3;
+                    let mut data_idx = pos(FG_DATA_SIZE_BYTES);
+                    let no_blend = alpha == 0xff;
+                    for chunk in line_buffer.chunks_exact_mut(VECTOR_SIZE_BYTES) {
+                        let max_len = data.len().min(data_idx + FG_DATA_SIZE_BYTES * VECTOR_SIZE_BYTES);
+                        let pixels24bpp = &data[data_idx..max_len];
+                        data_idx += FG_DATA_SIZE_BYTES * VECTOR_SIZE_BYTES;
+
+                        unsafe {
+                            let chunk_slice = core::slice::from_raw_parts_mut(chunk.as_mut_ptr() as *mut u32, VECTOR_SIZE_BYTES);
+                            if no_blend {
+                                super::simd::expand_24bpp_to_32bpp(alpha, &pixels24bpp, chunk_slice);
+
+                                #[cfg(feature = "simd-stat")]
+                                {
+                                    had_simd_op = true;
+                                    SIMD_NUM.store(SIMD_NUM.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+                                }
+                            } else {
+                                // TODO: perform a special case of simd_expand + blend with same SIMD vector registers
+                                //       to avoid using an intermediate memory buffer
+                                println!("expand_24bpp_to_32bpp_and_blend");
+                                super::simd::expand_24bpp_to_32bpp_and_blend(alpha, &pixels24bpp, chunk_slice);
+                            }
+                        }
+                    }
+
+                    // Process remaining pixels that didn't fit into the VECTOR_SIZE_BYTES chunk
+                    for pix in line_buffer.chunks_exact_mut(VECTOR_SIZE_BYTES).into_remainder() {
+                        let p = &data[data_idx..data_idx + FG_DATA_SIZE_BYTES];
+                        data_idx += FG_DATA_SIZE_BYTES;
+                        if alpha == 0xff {
+                            *pix = TargetPixel::from_rgb(p[0], p[1], p[2]);
+                        } else {
+                            pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                                alpha, p[0], p[1], p[2],
+                            )))
+                        }
+                    }
+                }
+
+                #[cfg(not(feature = "simd"))]
+                {
+                    for pix in line_buffer {
+                        let pos = pos(3);
+                        let p = &data[pos..pos + 3];
+                        if alpha == 0xff {
+                            *pix = TargetPixel::from_rgb(p[0], p[1], p[2]);
+                        } else {
+                            pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                                alpha, p[0], p[1], p[2],
+                            )))
+                        }
                     }
                 }
             }
@@ -139,15 +208,54 @@ pub(super) fn draw_texture_line(
                         pix.blend(c);
                     }
                 } else if alpha == 0xff {
-                    for pix in line_buffer {
-                        let pos = pos(4);
-                        let c = PremultipliedRgbaColor {
-                            alpha: data[pos + 3],
-                            red: data[pos + 0],
-                            green: data[pos + 1],
-                            blue: data[pos + 2],
-                        };
-                        pix.blend(c);
+                    #[cfg(all(target_arch = "arm", feature = "simd"))]
+                    {
+                        const VECTOR_SIZE_BYTES: usize = 8;
+                        const FG_DATA_SIZE_BYTES: usize = 4;
+                        let mut data_idx = pos(FG_DATA_SIZE_BYTES);
+                        for bg_chunk in line_buffer.chunks_exact_mut(VECTOR_SIZE_BYTES) {
+                            let max_len = data.len().min(data_idx + VECTOR_SIZE_BYTES * FG_DATA_SIZE_BYTES);
+                            let fg_pixels = &data[data_idx..max_len];
+                            data_idx += FG_DATA_SIZE_BYTES * VECTOR_SIZE_BYTES;
+
+                            unsafe {
+                                let fg_chunk = core::slice::from_raw_parts(fg_pixels.as_ptr() as *const u32, VECTOR_SIZE_BYTES);
+                                let bg_chunk_in = core::slice::from_raw_parts(bg_chunk.as_ptr() as *mut u32, VECTOR_SIZE_BYTES);
+                                let bg_chunk_out = core::slice::from_raw_parts_mut(bg_chunk.as_mut_ptr() as *mut u32, VECTOR_SIZE_BYTES);
+                                super::simd::simd_blend_8(fg_chunk, bg_chunk_in, bg_chunk_out);
+
+                                #[cfg(feature = "simd-stat")]
+                                {
+                                    SIMD_NUM.store(SIMD_NUM.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+                                    had_simd_op = true;
+                                }
+                            }
+                        }
+
+                        for pix in line_buffer.chunks_exact_mut(VECTOR_SIZE_BYTES).into_remainder() {
+                            let c = PremultipliedRgbaColor {
+                                alpha: data[data_idx + 3],
+                                red: data[data_idx + 0],
+                                green: data[data_idx + 1],
+                                blue: data[data_idx + 2],
+                            };
+                            pix.blend(c);
+                            data_idx += FG_DATA_SIZE_BYTES;
+                        }
+                    }
+
+                    #[cfg(not(feature = "simd"))]
+                    {
+                        for pix in line_buffer {
+                            let pos = pos(4);
+                            let c = PremultipliedRgbaColor {
+                                alpha: data[pos + 3],
+                                red: data[pos + 0],
+                                green: data[pos + 1],
+                                blue: data[pos + 2],
+                            };
+                            pix.blend(c);
+                        }
                     }
                 } else {
                     for pix in line_buffer {
@@ -163,18 +271,71 @@ pub(super) fn draw_texture_line(
                 }
             }
             PixelFormat::AlphaMap => {
-                for pix in line_buffer {
-                    let pos = pos(1);
-                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                        ((data[pos] as u16 * alpha as u16) / 255) as u8,
-                        color.red(),
-                        color.green(),
-                        color.blue(),
-                    ));
-                    pix.blend(c);
+                #[cfg(all(target_arch = "arm", feature = "simd"))]
+                {
+                    #[cfg(feature = "simd-stat")]
+                    unsafe {
+                        if let Some(h) = AMAP_HIST.get_mut(line_buffer.len()) {
+                            *h += 1;
+                        }
+                    }
+
+                    let fg_color = color.as_argb_encoded();
+                    const VECTOR_SIZE_BYTES: usize = 8;
+                    const FG_DATA_SIZE_BYTES: usize = 1;
+                    let mut data_idx = pos(FG_DATA_SIZE_BYTES);
+                    for bg_chunk in line_buffer.chunks_exact_mut(VECTOR_SIZE_BYTES) {
+                        let max_len = data.len().min(data_idx + FG_DATA_SIZE_BYTES * VECTOR_SIZE_BYTES);
+                        let alpha_map = &data[data_idx..max_len];
+                        data_idx += FG_DATA_SIZE_BYTES * VECTOR_SIZE_BYTES;
+
+                        unsafe {
+                            let bg_chunk = core::slice::from_raw_parts_mut(bg_chunk.as_mut_ptr() as *mut u32, VECTOR_SIZE_BYTES);
+                            super::simd::blend_by_alpha_map(alpha, fg_color, alpha_map, bg_chunk);
+
+                            #[cfg(feature = "simd-stat")]
+                            {
+                                SIMD_NUM.store(SIMD_NUM.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+                                had_simd_op = true;
+                            }
+                        }
+                    }
+
+                    // Process remaining pixels that didn't fit into the VECTOR_SIZE_BYTES
+                    for pix in line_buffer.chunks_exact_mut(VECTOR_SIZE_BYTES).into_remainder() {
+                        let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                            ((data[data_idx] as u16 * alpha as u16) / 255) as u8,
+                            color.red(),
+                            color.green(),
+                            color.blue(),
+                        ));
+                        pix.blend(c);
+                        data_idx += 1;
+                    }
+                }
+
+                #[cfg(not(feature = "simd"))]
+                {
+                    for pix in line_buffer {
+                        let pos = pos(1);
+                        let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                            ((data[pos] as u16 * alpha as u16) / 255) as u8,
+                            color.red(),
+                            color.green(),
+                            color.blue(),
+                        ));
+                        pix.blend(c);
+                    }
                 }
             }
         };
+
+        #[cfg(feature = "simd-stat")]
+        if had_simd_op {
+            unsafe {
+                SIMD_HIST[format as usize] += 1;
+            }
+        }
     }
 }
 
@@ -517,6 +678,11 @@ impl From<Color> for PremultipliedRgbaColor {
 impl PremultipliedRgbaColor {
     /// Convert a non premultiplied color to a premultiplied one
     fn premultiply(col: Color) -> Self {
+        #[cfg(feature = "simd-stat")]
+        if col.alpha() != 0xff {
+            PREMULTIPLY_NUM.store(PREMULTIPLY_NUM.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+        }
+
         let a = col.alpha() as u16;
         Self {
             alpha: col.alpha(),
@@ -552,6 +718,9 @@ pub trait TargetPixel: Sized + Copy {
 
 impl TargetPixel for crate::graphics::image::Rgb8Pixel {
     fn blend(&mut self, color: PremultipliedRgbaColor) {
+        #[cfg(feature = "simd-stat")]
+        BLEND_NUM.store(BLEND_NUM.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
         let a = (u8::MAX - color.alpha) as u16;
         self.r = (self.r as u16 * a / 255) as u8 + color.red;
         self.g = (self.g as u16 * a / 255) as u8 + color.green;
@@ -565,6 +734,9 @@ impl TargetPixel for crate::graphics::image::Rgb8Pixel {
 
 impl TargetPixel for PremultipliedRgbaColor {
     fn blend(&mut self, color: PremultipliedRgbaColor) {
+        #[cfg(feature = "simd-stat")]
+        BLEND_NUM.store(BLEND_NUM.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
         let a = (u8::MAX - color.alpha) as u16;
         self.red = (self.red as u16 * a / 255) as u8 + color.red;
         self.green = (self.green as u16 * a / 255) as u8 + color.green;
@@ -614,6 +786,9 @@ impl Rgb565Pixel {
 
 impl TargetPixel for Rgb565Pixel {
     fn blend(&mut self, color: PremultipliedRgbaColor) {
+        #[cfg(feature = "simd-stat")]
+        BLEND_NUM.store(BLEND_NUM.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
         let a = (u8::MAX - color.alpha) as u32;
         // convert to 5 bits
         let a = (a + 4) >> 3;

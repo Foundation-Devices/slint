@@ -9,6 +9,7 @@
 
 mod draw_functions;
 mod fonts;
+mod simd;
 
 use self::fonts::GlyphRenderer;
 use crate::api::Window;
@@ -88,6 +89,9 @@ mod internal {
 pub use internal::RenderingRotation;
 #[cfg(not(feature = "software-renderer-rotation"))]
 use internal::RenderingRotation;
+
+#[cfg(feature = "simd-stat")]
+use crate::software_renderer::draw_functions::{AMAP_HIST, BLEND_NUM, FORMAT_HIST, PREMULTIPLY_NUM, SIMD_HIST, SIMD_NUM};
 
 impl RenderingRotation {
     fn is_transpose(self) -> bool {
@@ -328,6 +332,18 @@ impl SoftwareRenderer {
     /// Returns the physical dirty region for this frame, excluding the extra_draw_region,
     /// in the window frame of reference. It affected by the screen rotation.
     pub fn render(&self, buffer: &mut [impl TargetPixel], pixel_stride: usize) -> PhysicalRegion {
+        #[cfg(feature = "simd-stat")]
+        {
+            BLEND_NUM.store(0, core::sync::atomic::Ordering::Relaxed);
+            PREMULTIPLY_NUM.store(0, core::sync::atomic::Ordering::Relaxed);
+            SIMD_NUM.store(0, core::sync::atomic::Ordering::Relaxed);
+            unsafe {
+                FORMAT_HIST.fill(0);
+                SIMD_HIST.fill(0);
+                AMAP_HIST.fill(0);
+            }
+        }
+
         let Some(window) = self.maybe_window_adapter.borrow().as_ref().and_then(|w| w.upgrade())
         else {
             return Default::default();
@@ -2304,5 +2320,37 @@ impl core::ops::Deref for MinimalSoftwareWindow {
     type Target = Window;
     fn deref(&self) -> &Self::Target {
         &self.window
+    }
+}
+
+impl SoftwareRenderer {
+    #[cfg(feature = "simd-stat")]
+    pub fn num_blends() -> u32 {
+        BLEND_NUM.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "simd-stat")]
+    pub fn num_pre_multiplications() -> u32 {
+        PREMULTIPLY_NUM.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "simd-stat")]
+    pub fn num_simd() -> u32 {
+        SIMD_NUM.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "simd-stat")]
+    pub fn format_hist() -> &'static [usize] {
+        unsafe { FORMAT_HIST.as_slice() }
+    }
+
+    #[cfg(feature = "simd-stat")]
+    pub fn simd_hist() -> &'static [usize] {
+        unsafe { SIMD_HIST.as_slice() }
+    }
+
+    #[cfg(feature = "simd-stat")]
+    pub fn amap_hist() -> &'static [usize] {
+        unsafe { AMAP_HIST.as_slice() }
     }
 }

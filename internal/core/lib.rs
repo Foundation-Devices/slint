@@ -3,6 +3,8 @@
 
 // cSpell: ignore sharedvector textlayout
 
+#![feature(stdsimd)]
+
 #![doc = include_str!("README.md")]
 #![doc(html_logo_url = "https://slint.dev/logo/slint-logo-square-light.svg")]
 #![deny(unsafe_code)]
