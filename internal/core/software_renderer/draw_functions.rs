@@ -76,6 +76,31 @@ pub(super) fn draw_texture_line(
         }
         end = end.min(len);
         let mut begin = 0;
+
+        // Just blit an image w/o any blending if it's big enough (most likely a background image)
+        let area_big_enough = source_size.area() >= 360 * 360;
+        if matches!(format, PixelFormat::RgbaPremultiplied) && area_big_enough {
+            let linebuf = &mut line_buffer[begin..end];
+            let bpp = 4;
+            let pos = pos.truncate() as usize * bpp;
+            let max_len = (pos + linebuf.len() * bpp).min(data.len());
+            let data_bytes = &data[pos..max_len];
+            let databuf_u32 = unsafe {
+                core::slice::from_raw_parts(
+                    data_bytes.as_ptr() as *const u32,
+                    data_bytes.len() / bpp,
+                )
+            };
+            let linebuf_u32 = unsafe {
+                core::slice::from_raw_parts_mut(
+                    linebuf.as_ptr() as *mut u32,
+                    data_bytes.len() / bpp,
+                )
+            };
+            linebuf_u32.copy_from_slice(databuf_u32);
+            return;
+        }
+
         while begin < len {
             fetch_blend_pixel(
                 &mut line_buffer[begin..end],
