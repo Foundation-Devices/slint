@@ -79,6 +79,7 @@ pub(super) fn draw_texture_line(
 
         // Just blit an image w/o any blending if it's big enough (most likely a background image)
         let area_big_enough = source_size.area() >= 360 * 360;
+        #[cfg(keyos)]
         if matches!(format, PixelFormat::RgbaPremultiplied) && area_big_enough {
             let linebuf = &mut line_buffer[begin..end];
             let bpp = 4;
