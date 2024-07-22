@@ -181,8 +181,6 @@ impl core::ops::Deref for FlickableDataBox {
 
 /// The distance required before it starts flicking if there is another item intercepting the mouse.
 const DISTANCE_THRESHOLD: LogicalLength = LogicalLength::new(8 as _);
-/// Time required before we stop caring about child event if the mouse hasn't been moved
-const DURATION_THRESHOLD: Duration = Duration::from_millis(500);
 
 #[derive(Default, Debug)]
 struct FlickableDataInner {
@@ -233,9 +231,6 @@ impl FlickableData {
             MouseEvent::Moved { position } => {
                 let do_intercept = inner.capture_events
                     || inner.pressed_time.map_or(false, |pressed_time| {
-                        if crate::animations::current_tick() - pressed_time > DURATION_THRESHOLD {
-                            return false;
-                        }
                         // Check if the mouse was moved more than the DISTANCE_THRESHOLD in a
                         // direction in which the flickable can flick
                         let diff = position - inner.pressed_pos;
