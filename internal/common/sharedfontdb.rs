@@ -60,6 +60,7 @@ thread_local! {
     target_os = "ios",
     target_arch = "wasm32",
     target_os = "android",
+    keyos,
 )))]
 mod fontconfig;
 
@@ -128,7 +129,7 @@ fn init_fontdb() -> FontDatabase {
         font_db.load_fonts_dir("/system/fonts");
         font_db.set_sans_serif_family("Roboto");
     }
-    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android", keyos)))]
     {
         font_db.load_system_fonts();
         cfg_if::cfg_if! {
