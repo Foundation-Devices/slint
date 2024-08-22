@@ -20,7 +20,7 @@ struct Font {
     fontdue_font: fontdue::Font,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "dont-embed-fonts"))]
 pub fn embed_glyphs<'a>(
     _component: &Rc<Component>,
     _scale_factor: f64,
@@ -32,7 +32,7 @@ pub fn embed_glyphs<'a>(
     false
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "dont-embed-fonts")))]
 pub fn embed_glyphs<'a>(
     component: &Rc<Component>,
     scale_factor: f64,
