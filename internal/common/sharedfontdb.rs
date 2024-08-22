@@ -190,6 +190,11 @@ pub fn register_font_from_memory(data: &'static [u8]) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Set the ultimate fallback font
+pub fn set_default_font_family<S: Into<String>>(family: S) {
+    FONT_DB.with(|db| db.borrow_mut().db.set_sans_serif_family(family));
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub fn register_font_from_path(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let requested_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
