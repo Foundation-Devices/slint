@@ -1048,7 +1048,8 @@ impl Expression {
             Expression::ElementReference(_) => false,
             Expression::RepeaterIndexReference { .. } => false,
             Expression::RepeaterModelReference { .. } => false,
-            Expression::FunctionParameterReference { .. } => false,
+            // Allow functions to be marked as const
+            Expression::FunctionParameterReference { .. } => true,
             Expression::BuiltinMacroReference { .. } => true,
             Expression::StructFieldAccess { base, .. } => base.is_constant(),
             Expression::ArrayIndex { array, index } => array.is_constant() && index.is_constant(),
@@ -1077,9 +1078,9 @@ impl Expression {
                 Path::Events(_, _) => true,
                 Path::Commands(_) => false,
             },
-            Expression::StoreLocalVariable { .. } => false,
-            // we should somehow find out if this is constant or not
-            Expression::ReadLocalVariable { .. } => false,
+            Expression::StoreLocalVariable { value, .. } => value.is_constant(),
+            // We only load what we store, and stores are alredy checked
+            Expression::ReadLocalVariable { .. } => true,
             Expression::EasingCurve(_) => true,
             Expression::LinearGradient { angle, stops } => {
                 angle.is_constant() && stops.iter().all(|(c, s)| c.is_constant() && s.is_constant())
