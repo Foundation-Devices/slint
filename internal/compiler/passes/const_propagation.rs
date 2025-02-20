@@ -247,8 +247,8 @@ fn extract_constant_property_reference(nr: &NamedReference) -> Option<Expression
     Some(expression)
 }
 
-fn try_inline_function(function: &Callable, arguments: &[Expression]) -> Option<Expression> {
-    let Callable::Function(function) = function else {
+fn try_inline_function(function: &Expression, arguments: &[Expression]) -> Option<Expression> {
+    let Expression::FunctionReference(function, _token) = function else {
         return None;
     };
     if !function.is_constant() {
