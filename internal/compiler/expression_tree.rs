@@ -1054,7 +1054,9 @@ impl Expression {
             Expression::StructFieldAccess { base, .. } => base.is_constant(),
             Expression::ArrayIndex { array, index } => array.is_constant() && index.is_constant(),
             Expression::Cast { from, .. } => from.is_constant(),
-            Expression::CodeBlock(sub) => sub.len() == 1 && sub.first().unwrap().is_constant(),
+            // This is conservative: the return value is the last expression in the block, but
+            // we kind of mean "pure" here too, so ensure the whole body is OK.
+            Expression::CodeBlock(sub) => sub.iter().all(|s| s.is_constant()),
             Expression::FunctionCall { function, arguments, .. } => {
                 // Assume that constant function are, in fact, pure
                 function.is_constant() && arguments.iter().all(|a| a.is_constant())
