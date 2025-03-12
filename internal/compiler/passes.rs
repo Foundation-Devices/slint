@@ -300,7 +300,7 @@ pub fn run_import_passes(
     unique_id::check_unique_id(doc, diag);
 }
 
-pub fn router_passes(
+pub fn run_minimal_typecheck_passes(
     doc: &mut crate::object_tree::Document,
     type_loader: &crate::typeloader::TypeLoader,
     diag: &mut crate::diagnostics::BuildDiagnostics,
