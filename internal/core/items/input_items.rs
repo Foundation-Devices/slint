@@ -226,31 +226,10 @@ impl Item for TouchArea {
         self_rc: &ItemRc,
         size: LogicalSize,
     ) -> RenderingResult {
-        if let Some(color) = (*backend).window().debug_touch_area.get() {
-            let d = DebugTouchArea { color };
-            let debug = Pin::new(&d);
-            (*backend).draw_border_rectangle(debug, self_rc, size, &self.cached_rendering_data);
+        if let Some(color) = (*backend).window().debug_touch.get() {
+            debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
         }
         RenderingResult::ContinueRenderingChildren
-    }
-}
-
-struct DebugTouchArea {
-    color: crate::Color,
-}
-
-impl crate::item_rendering::RenderBorderRectangle for DebugTouchArea {
-    fn background(self: Pin<&Self>) -> crate::Brush {
-        crate::Brush::SolidColor(self.color)
-    }
-    fn border_width(self: Pin<&Self>) -> LogicalLength {
-        LogicalLength::new(0.0)
-    }
-    fn border_radius(self: Pin<&Self>) -> crate::lengths::LogicalBorderRadius {
-        crate::lengths::LogicalBorderRadius::new(0.0, 0.0, 0.0, 0.0)
-    }
-    fn border_color(self: Pin<&Self>) -> crate::Brush {
-        crate::Brush::SolidColor(crate::Color::from_argb_u8(0, 0, 0, 0))
     }
 }
 
@@ -545,10 +524,14 @@ impl Item for SwipeGestureHandler {
 
     fn render(
         self: Pin<&Self>,
-        _backend: &mut ItemRendererRef,
-        _self_rc: &ItemRc,
-        _size: LogicalSize,
+        backend: &mut ItemRendererRef,
+        self_rc: &ItemRc,
+        size: LogicalSize,
     ) -> RenderingResult {
+        if let Some(color) = (*backend).window().debug_swipe.get() {
+            debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
+        }
+
         RenderingResult::ContinueRenderingChildren
     }
 }
@@ -586,4 +569,35 @@ pub unsafe extern "C" fn slint_swipegesturehandler_cancel(
     let window_adapter = &*(window_adapter as *const Rc<dyn WindowAdapter>);
     let self_rc = ItemRc::new(self_component.clone(), self_index);
     s.cancel(window_adapter, &self_rc);
+}
+
+fn debug_rect(
+    color: crate::Color,
+    backend: &mut ItemRendererRef,
+    self_rc: &ItemRc,
+    size: LogicalSize,
+    cached_rendering_data: &CachedRenderingData,
+) {
+    let d = DebugTouchArea { color };
+    let debug = Pin::new(&d);
+    (*backend).draw_border_rectangle(debug, self_rc, size, cached_rendering_data);
+}
+
+struct DebugTouchArea {
+    color: crate::Color,
+}
+
+impl crate::item_rendering::RenderBorderRectangle for DebugTouchArea {
+    fn background(self: Pin<&Self>) -> crate::Brush {
+        crate::Brush::SolidColor(self.color)
+    }
+    fn border_width(self: Pin<&Self>) -> LogicalLength {
+        LogicalLength::new(0.0)
+    }
+    fn border_radius(self: Pin<&Self>) -> crate::lengths::LogicalBorderRadius {
+        crate::lengths::LogicalBorderRadius::new(0.0, 0.0, 0.0, 0.0)
+    }
+    fn border_color(self: Pin<&Self>) -> crate::Brush {
+        crate::Brush::SolidColor(crate::Color::from_argb_u8(0, 0, 0, 0))
+    }
 }
