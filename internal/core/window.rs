@@ -452,6 +452,8 @@ pub struct WindowInner {
     close_requested: Callback<(), CloseRequestResponse>,
     click_state: ClickState,
     pub(crate) ctx: once_cell::unsync::Lazy<crate::SlintContext>,
+
+    pub(crate) debug_touch_area: Cell<Option<crate::Color>>,
 }
 
 impl Drop for WindowInner {
@@ -515,6 +517,7 @@ impl WindowInner {
             ctx: once_cell::unsync::Lazy::new(|| {
                 crate::context::GLOBAL_CONTEXT.with(|ctx| ctx.get().unwrap().clone())
             }),
+            debug_touch_area: Cell::new(None),
         }
     }
 
@@ -1331,6 +1334,29 @@ impl WindowInner {
     /// Provides access to the Windows' Slint context.
     pub fn context(&self) -> &crate::SlintContext {
         &*self.ctx
+    }
+
+    /// Returns whether debug touch areas is enabled
+    pub fn get_debug_touch_area(&self) -> Option<crate::Color> {
+        self.debug_touch_area.get()
+    }
+
+    /// Set debug touch areas to enabled or disabled
+    pub fn set_debug_touch_area(&self, color: Option<crate::Color>) {
+        self.debug_touch_area.set(color);
+
+        // mark the entire window as dirty to ensure a full redraw
+        let adapter = self.window_adapter();
+        let scale_factor = self.scale_factor();
+        let physical_size = adapter.size();
+        let logical_size = physical_size.to_logical(scale_factor);
+        let window_bounds_rect = crate::lengths::LogicalRect::new(
+            crate::lengths::LogicalPoint::default(),
+            logical_size.to_euclid(),
+        );
+        adapter.renderer().mark_dirty_region(window_bounds_rect.into());
+
+        self.window_adapter().request_redraw();
     }
 }
 

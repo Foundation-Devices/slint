@@ -222,11 +222,35 @@ impl Item for TouchArea {
 
     fn render(
         self: Pin<&Self>,
-        _backend: &mut ItemRendererRef,
-        _self_rc: &ItemRc,
-        _size: LogicalSize,
+        backend: &mut ItemRendererRef,
+        self_rc: &ItemRc,
+        size: LogicalSize,
     ) -> RenderingResult {
+        if let Some(color) = (*backend).window().debug_touch_area.get() {
+            let d = DebugTouchArea { color };
+            let debug = Pin::new(&d);
+            (*backend).draw_border_rectangle(debug, self_rc, size, &self.cached_rendering_data);
+        }
         RenderingResult::ContinueRenderingChildren
+    }
+}
+
+struct DebugTouchArea {
+    color: crate::Color,
+}
+
+impl crate::item_rendering::RenderBorderRectangle for DebugTouchArea {
+    fn background(self: Pin<&Self>) -> crate::Brush {
+        crate::Brush::SolidColor(self.color)
+    }
+    fn border_width(self: Pin<&Self>) -> LogicalLength {
+        LogicalLength::new(0.0)
+    }
+    fn border_radius(self: Pin<&Self>) -> crate::lengths::LogicalBorderRadius {
+        crate::lengths::LogicalBorderRadius::new(0.0, 0.0, 0.0, 0.0)
+    }
+    fn border_color(self: Pin<&Self>) -> crate::Brush {
+        crate::Brush::SolidColor(crate::Color::from_argb_u8(0, 0, 0, 0))
     }
 }
 
