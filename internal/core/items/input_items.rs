@@ -227,7 +227,9 @@ impl Item for TouchArea {
         size: LogicalSize,
     ) -> RenderingResult {
         if let Some(color) = (*backend).window().debug_touch.get() {
-            debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
+            if self.enabled() {
+                debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
+            }
         }
         RenderingResult::ContinueRenderingChildren
     }
@@ -529,7 +531,9 @@ impl Item for SwipeGestureHandler {
         size: LogicalSize,
     ) -> RenderingResult {
         if let Some(color) = (*backend).window().debug_swipe.get() {
-            debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
+            if self.enabled() {
+                debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
+            }
         }
 
         RenderingResult::ContinueRenderingChildren
