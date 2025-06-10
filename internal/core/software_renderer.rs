@@ -1942,13 +1942,42 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         }
 
         let font_request = text.font_request(self.window);
+        let max_size = geom.size.cast() * self.scale_factor;
+
+        #[cfg(feature = "std")]
+        let cache_key =
+            paragraph_cache::ParagraphCacheKey::new(&string, max_size, self.scale_factor);
+
+        #[cfg(feature = "std")]
+        if let Some(cached) = paragraph_cache::get_from_cache(cache_key) {
+            let geometry = (geom.translate(self.current_state.offset.to_vector()).cast()
+                * self.scale_factor)
+                .round()
+                .cast()
+                .transformed(self.rotation);
+
+            let source_rect = euclid::rect(0, 0, cached.width() as i16, cached.height() as i16);
+            self.processor.process_shared_image_buffer(
+                geometry,
+                SharedBufferCommand {
+                    buffer: SharedBufferData::SharedImage(cached),
+                    source_rect,
+                    extra: SceneTextureExtra {
+                        colorize: Default::default(),
+                        alpha: 255,
+                        rotation: self.rotation.orientation,
+                        dx: Fixed::from_integer(1),
+                        dy: Fixed::from_integer(1),
+                        off_x: Fixed::from_integer(0),
+                        off_y: Fixed::from_integer(0),
+                    },
+                },
+            );
+            return; // done – fast path
+        }
+        // ───────────────────────────────────────────────────────────────────
 
         let color = self.alpha_color(text.color().color());
-        let max_size = (geom.size.cast() * self.scale_factor).cast();
-
-        // Clip glyphs not only against the global clip but also against the Text's geometry to avoid drawing outside
-        // of its boundaries (that breaks partial rendering and the cast to usize for the item relative coordinate below).
-        // FIXME: we should allow drawing outside of the Text element's boundaries.
         let physical_clip = if let Some(logical_clip) = self.current_state.clip.intersection(&geom)
         {
             logical_clip.cast() * self.scale_factor
@@ -1960,15 +1989,15 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         let font = fonts::match_font(&font_request, self.scale_factor);
 
         match font {
-            fonts::Font::PixelFont(pf) => {
-                let layout = fonts::text_layout_for_font(&pf, &font_request, self.scale_factor);
+            fonts::Font::PixelFont(ref pf) => {
+                let layout = fonts::text_layout_for_font(pf, &font_request, self.scale_factor);
                 let (horizontal_alignment, vertical_alignment) = text.alignment();
 
                 let paragraph = TextParagraphLayout {
                     string: &string,
                     layout,
-                    max_width: max_size.width_length(),
-                    max_height: max_size.height_length(),
+                    max_width: max_size.width_length().cast(),
+                    max_height: max_size.height_length().cast(),
                     horizontal_alignment,
                     vertical_alignment,
                     wrap: text.wrap(),
@@ -1979,15 +2008,15 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
             }
             #[cfg(feature = "software-renderer-systemfonts")]
-            fonts::Font::VectorFont(vf) => {
-                let layout = fonts::text_layout_for_font(&vf, &font_request, self.scale_factor);
+            fonts::Font::VectorFont(ref vf) => {
+                let layout = fonts::text_layout_for_font(vf, &font_request, self.scale_factor);
                 let (horizontal_alignment, vertical_alignment) = text.alignment();
 
                 let paragraph = TextParagraphLayout {
                     string: &string,
                     layout,
-                    max_width: max_size.width_length(),
-                    max_height: max_size.height_length(),
+                    max_width: max_size.width_length().cast(),
+                    max_height: max_size.height_length().cast(),
                     horizontal_alignment,
                     vertical_alignment,
                     wrap: text.wrap(),
@@ -1997,6 +2026,92 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
                 self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
             }
+        }
+
+        // ─── First-time: rasterise paragraph into a bitmap and cache it ───
+        #[cfg(feature = "std")]
+        {
+            let w = max_size.width as u32;
+            let h = max_size.height as u32;
+            if w == 0 || h == 0 {
+                return;
+            }
+
+            let mut bmp = SharedPixelBuffer::<crate::graphics::Rgb8Pixel>::new(w, h);
+            {
+                // Off-screen renderer re-using existing drawing code
+                let mut off_renderer = SceneBuilder::new(
+                    euclid::size2(w as i16, h as i16),
+                    self.scale_factor,
+                    self.window,
+                    RenderToBuffer {
+                        buffer: bmp.make_mut_slice(),
+                        stride: w as usize,
+                        dirty_range_cache: vec![],
+                        dirty_region: {
+                            let mut pr = PhysicalRegion::default();
+                            pr.rectangles[0] = euclid::rect(0, 0, w as i16, h as i16).to_box2d();
+                            pr.count = 1;
+                            pr
+                        },
+                    },
+                    RenderingRotation::NoRotation,
+                );
+
+                let physical_clip = euclid::rect(0f32, 0f32, w as f32, h as f32);
+                let (horizontal_alignment, vertical_alignment) = text.alignment();
+                match font {
+                    fonts::Font::PixelFont(ref pixel_font) => {
+                        off_renderer.draw_text_paragraph(
+                            &TextParagraphLayout {
+                                string: &string,
+                                layout: fonts::text_layout_for_font(
+                                    pixel_font,
+                                    &font_request,
+                                    self.scale_factor,
+                                ),
+                                max_width: max_size.width_length().cast(),
+                                max_height: max_size.height_length().cast(),
+                                horizontal_alignment,
+                                vertical_alignment,
+                                wrap: text.wrap(),
+                                overflow: text.overflow(),
+                                single_line: false,
+                            },
+                            physical_clip,
+                            Default::default(),
+                            color,
+                            None,
+                        );
+                    }
+                    fonts::Font::VectorFont(ref vector_font) => {
+                        off_renderer.draw_text_paragraph(
+                            &TextParagraphLayout {
+                                string: &string,
+                                layout: fonts::text_layout_for_font(
+                                    vector_font,
+                                    &font_request,
+                                    self.scale_factor,
+                                ),
+                                max_width: max_size.width_length().cast(),
+                                max_height: max_size.height_length().cast(),
+                                horizontal_alignment,
+                                vertical_alignment,
+                                wrap: text.wrap(),
+                                overflow: text.overflow(),
+                                single_line: false,
+                            },
+                            physical_clip,
+                            Default::default(),
+                            color,
+                            None,
+                        );
+                    }
+                }
+            }
+
+            let img = SharedImageBuffer::RGB8(bmp);
+            paragraph_cache::add_to_cache(cache_key, img);
         }
     }
 
@@ -2270,5 +2385,84 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
     fn as_any(&mut self) -> Option<&mut dyn core::any::Any> {
         None
+    }
+}
+
+#[cfg(feature = "std")]
+mod paragraph_cache {
+    use std::hash::RandomState;
+    use std::num::NonZeroUsize;
+
+    use clru::{CLruCache, CLruCacheConfig, WeightScale};
+
+    use crate::{
+        graphics::SharedImageBuffer,
+        lengths::{PhysicalPx, ScaleFactor},
+    };
+
+    pub fn add_to_cache(key: ParagraphCacheKey, img: SharedImageBuffer) {
+        PARAGRAPH_CACHE.with(|c| c.borrow_mut().put_with_weight(key, img).ok());
+    }
+
+    pub fn get_from_cache(key: ParagraphCacheKey) -> Option<SharedImageBuffer> {
+        PARAGRAPH_CACHE.with(|c| c.borrow_mut().get(&key).cloned())
+    }
+
+    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
+    pub struct ParagraphCacheKey(u64);
+
+    impl ParagraphCacheKey {
+        pub fn new(
+            string: &str,
+            max_size: euclid::Size2D<f32, PhysicalPx>,
+            scale_factor: ScaleFactor,
+        ) -> Self {
+            // Build a *very* cheap hash – good enough for the LRU
+            let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
+            h = fnv1a64(string.as_bytes(), h);
+            h = fnv1a64(&max_size.width.to_le_bytes(), h);
+            h = fnv1a64(&max_size.height.to_le_bytes(), h);
+            h = fnv1a64(&(scale_factor.0.to_bits()).to_le_bytes(), h);
+            ParagraphCacheKey(h)
+        }
+    }
+
+    struct ParagraphWeightScale;
+    impl WeightScale<ParagraphCacheKey, SharedImageBuffer> for ParagraphWeightScale {
+        fn weight(&self, _k: &ParagraphCacheKey, v: &SharedImageBuffer) -> usize {
+            match v {
+                SharedImageBuffer::RGBA8Premultiplied(buf) => {
+                    buf.as_slice().len() * core::mem::size_of::<crate::graphics::Rgba8Pixel>()
+                }
+                SharedImageBuffer::RGB8(buf) => {
+                    buf.as_slice().len() * core::mem::size_of::<crate::graphics::Rgb8Pixel>()
+                }
+                SharedImageBuffer::RGBA8(buf) => {
+                    buf.as_slice().len() * core::mem::size_of::<crate::graphics::Rgba8Pixel>()
+                }
+            }
+        }
+    }
+
+    type ParagraphCache =
+        CLruCache<ParagraphCacheKey, SharedImageBuffer, RandomState, ParagraphWeightScale>;
+
+    thread_local! {
+        static PARAGRAPH_CACHE : core::cell::RefCell<ParagraphCache> = core::cell::RefCell::new(
+            CLruCache::with_config(
+                CLruCacheConfig::new(NonZeroUsize::new(4 * 1024 * 1024).unwrap())   // 4 MiB
+                    .with_scale(ParagraphWeightScale)
+            )
+        );
+    }
+
+    /// Very small FNV-1a helper for the cache key
+    fn fnv1a64(bytes: &[u8], mut hash: u64) -> u64 {
+        const FNV_PRIME: u64 = 0x0000_0001_0000_01B3;
+        for b in bytes {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        hash
     }
 }
