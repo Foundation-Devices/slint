@@ -1602,6 +1602,58 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
             color
         }
     }
+
+    #[cfg(feature = "std")]
+    fn draw_text_bitmap(
+        &mut self,
+        text: &Pin<&dyn crate::item_rendering::RenderText>,
+        geom: LogicalRect,
+        img: SharedImageBuffer,
+    ) {
+        let full_geom = (geom.translate(self.current_state.offset.to_vector()).cast()
+            * self.scale_factor)
+            .round()
+            .cast()
+            .transformed(self.rotation);
+
+        let Some(logical_clip) = self.current_state.clip.intersection(&geom) else {
+            return; // completely outside the clip
+        };
+        let clip_phys = (logical_clip.translate(self.current_state.offset.to_vector()).cast()
+            * self.scale_factor)
+            .round()
+            .cast()
+            .transformed(self.rotation);
+
+        let Some(clipped_geom) = full_geom.intersection(&clip_phys) else {
+            return; // nothing visible
+        };
+
+        // Corresponding area inside the cached bitmap
+        let dx = (clipped_geom.min_x() - full_geom.min_x()) as i16;
+        let dy = (clipped_geom.min_y() - full_geom.min_y()) as i16;
+        let source_rect = euclid::rect(dx, dy, clipped_geom.width(), clipped_geom.height());
+
+        let alpha = (text.color().color().alpha() as f32 * self.current_state.alpha) as u8;
+
+        self.processor.process_shared_image_buffer(
+            clipped_geom,
+            SharedBufferCommand {
+                buffer: SharedBufferData::SharedImage(img),
+                source_rect,
+                extra: SceneTextureExtra {
+                    colorize: Default::default(),
+                    alpha,
+                    rotation: self.rotation.orientation,
+                    dx: Fixed::from_integer(1),
+                    dy: Fixed::from_integer(1),
+                    off_x: Fixed::from_integer(0),
+                    off_y: Fixed::from_integer(0),
+                },
+            },
+        );
+        return;
+    }
 }
 
 struct SelectionInfo {
@@ -1950,49 +2002,8 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
         #[cfg(feature = "std")]
         if let Some(cached) = paragraph_cache::get_from_cache(&cache_key) {
-            let full_geom = (geom.translate(self.current_state.offset.to_vector()).cast()
-                * self.scale_factor)
-                .round()
-                .cast()
-                .transformed(self.rotation);
-
-            let Some(logical_clip) = self.current_state.clip.intersection(&geom) else {
-                return; // completely outside the clip
-            };
-            let clip_phys = (logical_clip.translate(self.current_state.offset.to_vector()).cast()
-                * self.scale_factor)
-                .round()
-                .cast()
-                .transformed(self.rotation);
-
-            let Some(clipped_geom) = full_geom.intersection(&clip_phys) else {
-                return; // nothing visible
-            };
-
-            // Corresponding area inside the cached bitmap
-            let dx = (clipped_geom.min_x() - full_geom.min_x()) as i16;
-            let dy = (clipped_geom.min_y() - full_geom.min_y()) as i16;
-            let source_rect = euclid::rect(dx, dy, clipped_geom.width(), clipped_geom.height());
-
-            let alpha = (text.color().color().alpha() as f32 * self.current_state.alpha) as u8;
-
-            self.processor.process_shared_image_buffer(
-                clipped_geom,
-                SharedBufferCommand {
-                    buffer: SharedBufferData::SharedImage(cached),
-                    source_rect,
-                    extra: SceneTextureExtra {
-                        colorize: Default::default(),
-                        alpha,
-                        rotation: self.rotation.orientation,
-                        dx: Fixed::from_integer(1),
-                        dy: Fixed::from_integer(1),
-                        off_x: Fixed::from_integer(0),
-                        off_y: Fixed::from_integer(0),
-                    },
-                },
-            );
-            return; // done – fast path
+            self.draw_text_bitmap(&text, geom, cached);
+            return;
         }
         // ───────────────────────────────────────────────────────────────────
 
