@@ -1943,13 +1943,14 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
         let font_request = text.font_request(self.window);
         let max_size = geom.size.cast() * self.scale_factor;
+        let (horizontal_alignment, vertical_alignment) = text.alignment();
 
         #[cfg(feature = "std")]
         let cache_key = paragraph_cache::ParagraphCacheKey::new(
             &string,
             max_size,
             self.scale_factor,
-            text.color(),
+            text.color().color(),
         );
 
         #[cfg(feature = "std")]
@@ -1961,6 +1962,9 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 .transformed(self.rotation);
 
             let source_rect = euclid::rect(0, 0, cached.width() as i16, cached.height() as i16);
+
+            let alpha = (text.color().color().alpha() as f32 * self.current_state.alpha) as u8;
+
             self.processor.process_shared_image_buffer(
                 geometry,
                 SharedBufferCommand {
@@ -1968,7 +1972,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                     source_rect,
                     extra: SceneTextureExtra {
                         colorize: Default::default(),
-                        alpha: 255,
+                        alpha,
                         rotation: self.rotation.orientation,
                         dx: Fixed::from_integer(1),
                         dy: Fixed::from_integer(1),
@@ -1995,7 +1999,6 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         match font {
             fonts::Font::PixelFont(ref pf) => {
                 let layout = fonts::text_layout_for_font(pf, &font_request, self.scale_factor);
-                let (horizontal_alignment, vertical_alignment) = text.alignment();
 
                 let paragraph = TextParagraphLayout {
                     string: &string,
@@ -2014,7 +2017,6 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
             #[cfg(feature = "software-renderer-systemfonts")]
             fonts::Font::VectorFont(ref vf) => {
                 let layout = fonts::text_layout_for_font(vf, &font_request, self.scale_factor);
-                let (horizontal_alignment, vertical_alignment) = text.alignment();
 
                 let paragraph = TextParagraphLayout {
                     string: &string,
@@ -2084,7 +2086,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                             },
                             physical_clip,
                             Default::default(),
-                            color,
+                            text.color().color(),
                             None,
                         );
                     }
@@ -2107,7 +2109,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                             },
                             physical_clip,
                             Default::default(),
-                            color,
+                            text.color().color(),
                             None,
                         );
                     }
@@ -2420,20 +2422,18 @@ mod paragraph_cache {
             string: &str,
             max_size: euclid::Size2D<f32, PhysicalPx>,
             scale_factor: ScaleFactor,
-            brush: crate::Brush,
+            color: crate::Color,
         ) -> Self {
-            let color = brush.color().to_argb_u8();
-
             // Build a *very* cheap hash – good enough for the LRU
             let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
             h = fnv1a64(string.as_bytes(), h);
             h = fnv1a64(&max_size.width.to_le_bytes(), h);
             h = fnv1a64(&max_size.height.to_le_bytes(), h);
             h = fnv1a64(&(scale_factor.0.to_bits()).to_le_bytes(), h);
-            h = fnv1a64(&color.red.to_le_bytes(), h);
-            h = fnv1a64(&color.green.to_le_bytes(), h);
-            h = fnv1a64(&color.blue.to_le_bytes(), h);
-            h = fnv1a64(&color.alpha.to_le_bytes(), h);
+            h = fnv1a64(&color.red().to_le_bytes(), h);
+            h = fnv1a64(&color.green().to_le_bytes(), h);
+            h = fnv1a64(&color.blue().to_le_bytes(), h);
+            h = fnv1a64(&color.alpha().to_le_bytes(), h);
             ParagraphCacheKey(h)
         }
     }
