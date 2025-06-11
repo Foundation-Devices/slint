@@ -2139,7 +2139,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 }
             }
 
-            let img = SharedImageBuffer::RGBA8(bmp);
+            let img = SharedImageBuffer::RGBA8Premultiplied(bmp);
             paragraph_cache::add_to_cache(cache_key, img);
         }
     }
@@ -2498,10 +2498,13 @@ mod paragraph_cache {
     type ParagraphCache =
         CLruCache<ParagraphCacheKey, SharedImageBuffer, RandomState, ParagraphWeightScale>;
 
+    // 1 MiB
+    const MAX_CACHE_SIZE: usize = 1 * 1024 * 1024;
+
     thread_local! {
         static PARAGRAPH_CACHE : core::cell::RefCell<ParagraphCache> = core::cell::RefCell::new(
             CLruCache::with_config(
-                CLruCacheConfig::new(NonZeroUsize::new(4 * 1024 * 1024).unwrap())   // 4 MiB
+                CLruCacheConfig::new(NonZeroUsize::new(MAX_CACHE_SIZE).unwrap())
                     .with_scale(ParagraphWeightScale)
             )
         );
