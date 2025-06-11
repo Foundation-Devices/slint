@@ -1562,10 +1562,10 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                                 self.processor.process_shared_image_buffer(
                                     geometry.transformed(self.rotation),
                                     SharedBufferCommand {
-                                        buffer: SharedBufferData::AlphaMap {
+                                        buffer: SharedBufferData::AlphaMap(AlphaMapBuffer {
                                             data: data.clone(),
                                             width: pixel_stride,
-                                        },
+                                        }),
                                         source_rect,
                                         extra: SceneTextureExtra {
                                             colorize: color,
@@ -1608,7 +1608,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         &mut self,
         text: &Pin<&dyn crate::item_rendering::RenderText>,
         geom: LogicalRect,
-        img: SharedImageBuffer,
+        bitmap: AlphaMapBuffer,
     ) {
         let full_geom = (geom.translate(self.current_state.offset.to_vector()).cast()
             * self.scale_factor)
@@ -1634,15 +1634,19 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         let dy = (clipped_geom.min_y() - full_geom.min_y()) as i16;
         let source_rect = euclid::rect(dx, dy, clipped_geom.width(), clipped_geom.height());
 
-        let alpha = (text.color().color().alpha() as f32 * self.current_state.alpha) as u8;
+        let full_color = text.color().color();
+        let alpha = (full_color.alpha() as f32 * self.current_state.alpha) as u8;
+
+        // When we have an AlphaMap we need to provide the text color via `colorize`.
+        let colorize = full_color.with_alpha(1.0);
 
         self.processor.process_shared_image_buffer(
             clipped_geom,
             SharedBufferCommand {
-                buffer: SharedBufferData::SharedImage(img),
+                buffer: SharedBufferData::AlphaMap(bitmap),
                 source_rect,
                 extra: SceneTextureExtra {
-                    colorize: Default::default(),
+                    colorize,
                     alpha,
                     rotation: self.rotation.orientation,
                     dx: Fixed::from_integer(1),
@@ -1744,9 +1748,15 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
             }
         }
 
-        let img = SharedImageBuffer::RGBA8Premultiplied(bmp);
-        paragraph_cache::add_to_cache(cache_key, img.clone());
-        self.draw_text_bitmap(&text, geom, img);
+        // Extract alpha channel into a contiguous buffer so that we can render using the
+        // AlphaMap fast-path (1 byte per pixel instead of 4).
+        let alpha_vec: Vec<u8> = bmp.as_slice().iter().map(|p| p.a).collect();
+        let alpha_rc: Rc<[u8]> = Rc::from(alpha_vec.into_boxed_slice());
+
+        let buffer_data = AlphaMapBuffer { data: alpha_rc, width: w as u16 };
+
+        paragraph_cache::add_to_cache(cache_key, buffer_data.clone());
+        self.draw_text_bitmap(&text, geom, buffer_data);
     }
 }
 
@@ -2097,9 +2107,14 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 return;
             }
 
+            println!("cache miss: {string} {cache_key:?}");
+
             self.draw_text_bitmap_to_cache(&text, geom, string, cache_key);
             return;
         }
+
+        #[cfg(feature = "std")]
+        println!("complete miss? {string}");
 
         let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
         let (horizontal_alignment, vertical_alignment) = text.alignment();
@@ -2441,15 +2456,17 @@ mod paragraph_cache {
         SharedString,
     };
 
-    pub fn add_to_cache(key: ParagraphCacheKey, img: SharedImageBuffer) {
-        with_cache(|c| c.put_with_weight(key, img).ok());
+    use super::scene::AlphaMapBuffer;
+
+    pub fn add_to_cache(key: ParagraphCacheKey, data: AlphaMapBuffer) {
+        with_cache(|c| c.put_with_weight(key, data).ok());
     }
 
-    pub fn get_from_cache(key: &ParagraphCacheKey) -> Option<SharedImageBuffer> {
+    pub fn get_from_cache(key: &ParagraphCacheKey) -> Option<AlphaMapBuffer> {
         with_cache(|c| c.get(&key).cloned())
     }
 
-    #[derive(Clone, Eq, PartialEq, Hash)]
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
     pub struct ParagraphCacheKey {
         text: SharedString,
         max_size: euclid::Size2D<u32, PhysicalPx>,
@@ -2461,11 +2478,6 @@ mod paragraph_cache {
         vertical_alignment: TextVerticalAlignment,
         wrap: TextWrap,
         overflow: TextOverflow,
-
-        // not encoding alpha on purpose, and applying alpha blending during render
-        r: u8,
-        g: u8,
-        b: u8,
     }
 
     impl ParagraphCacheKey {
@@ -2482,7 +2494,6 @@ mod paragraph_cache {
                 return None;
             }
 
-            let color = text.color().color();
             let (horizontal_alignment, vertical_alignment) = text.alignment();
 
             Some(Self {
@@ -2495,37 +2506,24 @@ mod paragraph_cache {
                 vertical_alignment,
                 wrap: text.wrap(),
                 overflow: text.overflow(),
-
-                r: color.red(),
-                g: color.green(),
-                b: color.blue(),
             })
         }
     }
 
     struct ParagraphWeightScale;
-    impl WeightScale<ParagraphCacheKey, SharedImageBuffer> for ParagraphWeightScale {
-        fn weight(&self, _k: &ParagraphCacheKey, v: &SharedImageBuffer) -> usize {
-            match v {
-                SharedImageBuffer::RGBA8Premultiplied(buf) => {
-                    buf.as_slice().len() * core::mem::size_of::<crate::graphics::Rgba8Pixel>()
-                }
-                SharedImageBuffer::RGB8(buf) => {
-                    buf.as_slice().len() * core::mem::size_of::<crate::graphics::Rgb8Pixel>()
-                }
-                SharedImageBuffer::RGBA8(buf) => {
-                    buf.as_slice().len() * core::mem::size_of::<crate::graphics::Rgba8Pixel>()
-                }
-            }
+    impl WeightScale<ParagraphCacheKey, AlphaMapBuffer> for ParagraphWeightScale {
+        fn weight(&self, _k: &ParagraphCacheKey, v: &AlphaMapBuffer) -> usize {
+            v.data.len()
         }
     }
 
     fn image_size(height: u32, width: u32) -> usize {
-        height as usize * width as usize * core::mem::size_of::<crate::graphics::Rgba8Pixel>()
+        // Alpha map: 1 byte per pixel
+        height as usize * width as usize
     }
 
     type ParagraphCache =
-        CLruCache<ParagraphCacheKey, SharedImageBuffer, RandomState, ParagraphWeightScale>;
+        CLruCache<ParagraphCacheKey, AlphaMapBuffer, RandomState, ParagraphWeightScale>;
 
     // 1 MiB
     const DEFAULT_CACHE_SIZE: usize = 1 * 1024 * 1024;
