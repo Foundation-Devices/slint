@@ -2077,7 +2077,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
                 let physical_clip = euclid::rect(0f32, 0f32, w as f32, h as f32);
                 let (horizontal_alignment, vertical_alignment) = text.alignment();
-                let text_color = text.color().color().with_alpha(0.0);
+                let text_color = text.color().color().with_alpha(1.0);
                 match font {
                     fonts::Font::PixelFont(ref pixel_font) => {
                         off_renderer.draw_text_paragraph(
