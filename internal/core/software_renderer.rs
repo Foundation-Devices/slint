@@ -1945,8 +1945,12 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         let max_size = geom.size.cast() * self.scale_factor;
 
         #[cfg(feature = "std")]
-        let cache_key =
-            paragraph_cache::ParagraphCacheKey::new(&string, max_size, self.scale_factor);
+        let cache_key = paragraph_cache::ParagraphCacheKey::new(
+            &string,
+            max_size,
+            self.scale_factor,
+            text.color(),
+        );
 
         #[cfg(feature = "std")]
         if let Some(cached) = paragraph_cache::get_from_cache(cache_key) {
@@ -2037,7 +2041,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 return;
             }
 
-            let mut bmp = SharedPixelBuffer::<crate::graphics::Rgb8Pixel>::new(w, h);
+            let mut bmp = SharedPixelBuffer::<crate::graphics::Rgba8Pixel>::new(w, h);
             {
                 // Off-screen renderer re-using existing drawing code
                 let mut off_renderer = SceneBuilder::new(
@@ -2110,7 +2114,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 }
             }
 
-            let img = SharedImageBuffer::RGB8(bmp);
+            let img = SharedImageBuffer::RGBA8(bmp);
             paragraph_cache::add_to_cache(cache_key, img);
         }
     }
@@ -2416,13 +2420,20 @@ mod paragraph_cache {
             string: &str,
             max_size: euclid::Size2D<f32, PhysicalPx>,
             scale_factor: ScaleFactor,
+            brush: crate::Brush,
         ) -> Self {
+            let color = brush.color().to_argb_u8();
+
             // Build a *very* cheap hash – good enough for the LRU
             let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
             h = fnv1a64(string.as_bytes(), h);
             h = fnv1a64(&max_size.width.to_le_bytes(), h);
             h = fnv1a64(&max_size.height.to_le_bytes(), h);
             h = fnv1a64(&(scale_factor.0.to_bits()).to_le_bytes(), h);
+            h = fnv1a64(&color.red.to_le_bytes(), h);
+            h = fnv1a64(&color.green.to_le_bytes(), h);
+            h = fnv1a64(&color.blue.to_le_bytes(), h);
+            h = fnv1a64(&color.alpha.to_le_bytes(), h);
             ParagraphCacheKey(h)
         }
     }

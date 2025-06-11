@@ -780,6 +780,21 @@ impl TargetPixel for crate::graphics::image::Rgb8Pixel {
     }
 }
 
+impl TargetPixel for crate::graphics::Rgba8Pixel {
+    fn blend(&mut self, color: PremultipliedRgbaColor) {
+        let a = (u8::MAX - color.alpha) as u16;
+        self.r = (self.r as u16 * a / 255) as u8 + color.red;
+        self.g = (self.g as u16 * a / 255) as u8 + color.green;
+        self.b = (self.b as u16 * a / 255) as u8 + color.blue;
+        self.a =
+            (self.a as u16 + color.alpha as u16 - (self.a as u16 * color.alpha as u16) / 255) as u8;
+    }
+
+    fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b, a: 255 }
+    }
+}
+
 impl TargetPixel for PremultipliedRgbaColor {
     fn blend(&mut self, color: PremultipliedRgbaColor) {
         let a = (u8::MAX - color.alpha) as u16;
