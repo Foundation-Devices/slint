@@ -2086,10 +2086,11 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         if !self.should_draw(&geom) {
             return;
         }
+        let font_request = text.font_request(self.window);
 
         #[cfg(feature = "std")]
         if let Some(cache_key) =
-            paragraph_cache::ParagraphCacheKey::new(&text, size, self.scale_factor)
+            paragraph_cache::ParagraphCacheKey::new(&text, &font_request, size, self.scale_factor)
         {
             if let Some(cached) = paragraph_cache::get_from_cache(&cache_key) {
                 self.draw_text_bitmap(&text, geom, cached);
@@ -2103,7 +2104,6 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
         let (horizontal_alignment, vertical_alignment) = text.alignment();
 
-        let font_request = text.font_request(self.window);
         let font = fonts::match_font(&font_request, self.scale_factor);
         let color = self.alpha_color(text.color().color());
         let physical_clip = if let Some(logical_clip) = self.current_state.clip.intersection(&geom)
@@ -2435,8 +2435,8 @@ mod paragraph_cache {
     use clru::{CLruCache, CLruCacheConfig, WeightScale};
 
     use crate::{
-        graphics::SharedImageBuffer,
-        items::{TextHorizontalAlignment, TextVerticalAlignment},
+        graphics::{FontRequest, SharedImageBuffer},
+        items::{TextHorizontalAlignment, TextOverflow, TextVerticalAlignment, TextWrap},
         lengths::{LogicalPx, LogicalSize, PhysicalPx, ScaleFactor},
         SharedString,
     };
@@ -2452,10 +2452,15 @@ mod paragraph_cache {
     #[derive(Clone, Eq, PartialEq, Hash)]
     pub struct ParagraphCacheKey {
         text: SharedString,
-        size: euclid::Size2D<u32, LogicalPx>,
-        scale_factor: euclid::Scale<u32, LogicalPx, PhysicalPx>,
+        max_size: euclid::Size2D<u32, PhysicalPx>,
+
+        weight: Option<i32>,
+        pixel_size: Option<euclid::Length<u32, LogicalPx>>,
+
         horizontal_alignment: TextHorizontalAlignment,
         vertical_alignment: TextVerticalAlignment,
+        wrap: TextWrap,
+        overflow: TextOverflow,
 
         // not encoding alpha on purpose, and applying alpha blending during render
         r: u8,
@@ -2467,11 +2472,12 @@ mod paragraph_cache {
         // returns none if the text cannot be cached
         pub fn new(
             text: &Pin<&dyn crate::item_rendering::RenderText>,
+            font_request: &FontRequest,
             size: LogicalSize,
             scale_factor: ScaleFactor,
         ) -> Option<Self> {
-            let item_size = size * scale_factor;
-            let item_size = image_size(item_size.width as u32, item_size.height as u32);
+            let max_size = (size * scale_factor).cast::<u32>();
+            let item_size = image_size(max_size.width, max_size.height);
             if item_size > max_item_size() {
                 return None;
             }
@@ -2481,11 +2487,14 @@ mod paragraph_cache {
 
             Some(Self {
                 text: text.text(),
-                size: size.cast(),
-                scale_factor: scale_factor.cast(),
+                max_size,
+                weight: font_request.weight,
+                pixel_size: font_request.pixel_size.map(|p| p.cast()),
 
                 horizontal_alignment,
                 vertical_alignment,
+                wrap: text.wrap(),
+                overflow: text.overflow(),
 
                 r: color.red(),
                 g: color.green(),
