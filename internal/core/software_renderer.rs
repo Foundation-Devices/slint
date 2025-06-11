@@ -1993,77 +1993,26 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
             return;
         }
 
-        let font_request = text.font_request(self.window);
         let max_size = geom.size.cast() * self.scale_factor;
         let (horizontal_alignment, vertical_alignment) = text.alignment();
 
         #[cfg(feature = "std")]
-        let cache_key = paragraph_cache::ParagraphCacheKey::new(&text, size, self.scale_factor);
-
-        #[cfg(feature = "std")]
-        if let Some(cached) = paragraph_cache::get_from_cache(&cache_key) {
-            self.draw_text_bitmap(&text, geom, cached);
-            return;
-        }
-        // ───────────────────────────────────────────────────────────────────
-
-        let color = self.alpha_color(text.color().color());
-        let physical_clip = if let Some(logical_clip) = self.current_state.clip.intersection(&geom)
         {
-            logical_clip.cast() * self.scale_factor
-        } else {
-            return; // This should have been caught earlier already
-        };
-        let offset = self.current_state.offset.to_vector().cast() * self.scale_factor;
-
-        let font = fonts::match_font(&font_request, self.scale_factor);
-
-        match font {
-            fonts::Font::PixelFont(ref pf) => {
-                let layout = fonts::text_layout_for_font(pf, &font_request, self.scale_factor);
-
-                let paragraph = TextParagraphLayout {
-                    string: &string,
-                    layout,
-                    max_width: max_size.width_length().cast(),
-                    max_height: max_size.height_length().cast(),
-                    horizontal_alignment,
-                    vertical_alignment,
-                    wrap: text.wrap(),
-                    overflow: text.overflow(),
-                    single_line: false,
-                };
-
-                self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
+            let cache_key = paragraph_cache::ParagraphCacheKey::new(&text, size, self.scale_factor);
+            if let Some(cached) = paragraph_cache::get_from_cache(&cache_key) {
+                self.draw_text_bitmap(&text, geom, cached);
+                return;
             }
-            #[cfg(feature = "software-renderer-systemfonts")]
-            fonts::Font::VectorFont(ref vf) => {
-                let layout = fonts::text_layout_for_font(vf, &font_request, self.scale_factor);
 
-                let paragraph = TextParagraphLayout {
-                    string: &string,
-                    layout,
-                    max_width: max_size.width_length().cast(),
-                    max_height: max_size.height_length().cast(),
-                    horizontal_alignment,
-                    vertical_alignment,
-                    wrap: text.wrap(),
-                    overflow: text.overflow(),
-                    single_line: false,
-                };
-
-                self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
-            }
-        }
-
-        // ─── First-time: rasterise paragraph into a bitmap and cache it ───
-        #[cfg(feature = "std")]
-        {
             let w = max_size.width as u32;
             let h = max_size.height as u32;
             if w == 0 || h == 0 {
                 return;
             }
+
+            let font_request = text.font_request(self.window);
+            // this is expensive, so we only do it after we check the cache
+            let font = fonts::match_font(&font_request, self.scale_factor);
 
             let mut bmp = SharedPixelBuffer::<crate::graphics::Rgba8Pixel>::new(w, h);
             {
@@ -2140,7 +2089,61 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
             }
 
             let img = SharedImageBuffer::RGBA8Premultiplied(bmp);
-            paragraph_cache::add_to_cache(cache_key, img);
+            paragraph_cache::add_to_cache(cache_key, img.clone());
+            self.draw_text_bitmap(&text, geom, img);
+            return;
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            let font_request = text.font_request(self.window);
+            let font = fonts::match_font(&font_request, self.scale_factor);
+            let color = self.alpha_color(text.color().color());
+            let physical_clip =
+                if let Some(logical_clip) = self.current_state.clip.intersection(&geom) {
+                    logical_clip.cast() * self.scale_factor
+                } else {
+                    return; // This should have been caught earlier already
+                };
+            let offset = self.current_state.offset.to_vector().cast() * self.scale_factor;
+
+            match font {
+                fonts::Font::PixelFont(ref pf) => {
+                    let layout = fonts::text_layout_for_font(pf, &font_request, self.scale_factor);
+
+                    let paragraph = TextParagraphLayout {
+                        string: &string,
+                        layout,
+                        max_width: max_size.width_length().cast(),
+                        max_height: max_size.height_length().cast(),
+                        horizontal_alignment,
+                        vertical_alignment,
+                        wrap: text.wrap(),
+                        overflow: text.overflow(),
+                        single_line: false,
+                    };
+
+                    self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
+                }
+                #[cfg(feature = "software-renderer-systemfonts")]
+                fonts::Font::VectorFont(ref vf) => {
+                    let layout = fonts::text_layout_for_font(vf, &font_request, self.scale_factor);
+
+                    let paragraph = TextParagraphLayout {
+                        string: &string,
+                        layout,
+                        max_width: max_size.width_length().cast(),
+                        max_height: max_size.height_length().cast(),
+                        horizontal_alignment,
+                        vertical_alignment,
+                        wrap: text.wrap(),
+                        overflow: text.overflow(),
+                        single_line: false,
+                    };
+
+                    self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
+                }
+            }
         }
     }
 
