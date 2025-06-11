@@ -1955,18 +1955,34 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
         #[cfg(feature = "std")]
         if let Some(cached) = paragraph_cache::get_from_cache(cache_key) {
-            let geometry = (geom.translate(self.current_state.offset.to_vector()).cast()
+            let full_geom = (geom.translate(self.current_state.offset.to_vector()).cast()
                 * self.scale_factor)
                 .round()
                 .cast()
                 .transformed(self.rotation);
 
-            let source_rect = euclid::rect(0, 0, cached.width() as i16, cached.height() as i16);
+            let Some(logical_clip) = self.current_state.clip.intersection(&geom) else {
+                return; // completely outside the clip
+            };
+            let clip_phys = (logical_clip.translate(self.current_state.offset.to_vector()).cast()
+                * self.scale_factor)
+                .round()
+                .cast()
+                .transformed(self.rotation);
+
+            let Some(clipped_geom) = full_geom.intersection(&clip_phys) else {
+                return; // nothing visible
+            };
+
+            // Corresponding area inside the cached bitmap
+            let dx = (clipped_geom.min_x() - full_geom.min_x()) as i16;
+            let dy = (clipped_geom.min_y() - full_geom.min_y()) as i16;
+            let source_rect = euclid::rect(dx, dy, clipped_geom.width(), clipped_geom.height());
 
             let alpha = (text.color().color().alpha() as f32 * self.current_state.alpha) as u8;
 
             self.processor.process_shared_image_buffer(
-                geometry,
+                clipped_geom,
                 SharedBufferCommand {
                     buffer: SharedBufferData::SharedImage(cached),
                     source_rect,
