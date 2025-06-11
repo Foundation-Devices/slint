@@ -1946,15 +1946,10 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         let (horizontal_alignment, vertical_alignment) = text.alignment();
 
         #[cfg(feature = "std")]
-        let cache_key = paragraph_cache::ParagraphCacheKey::new(
-            &string,
-            max_size,
-            self.scale_factor,
-            text.color().color(),
-        );
+        let cache_key = paragraph_cache::ParagraphCacheKey::new(&text, size, self.scale_factor);
 
         #[cfg(feature = "std")]
-        if let Some(cached) = paragraph_cache::get_from_cache(cache_key) {
+        if let Some(cached) = paragraph_cache::get_from_cache(&cache_key) {
             let full_geom = (geom.translate(self.current_state.offset.to_vector()).cast()
                 * self.scale_factor)
                 .round()
@@ -2082,6 +2077,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
                 let physical_clip = euclid::rect(0f32, 0f32, w as f32, h as f32);
                 let (horizontal_alignment, vertical_alignment) = text.alignment();
+                let text_color = text.color().color().with_alpha(0.0);
                 match font {
                     fonts::Font::PixelFont(ref pixel_font) => {
                         off_renderer.draw_text_paragraph(
@@ -2102,7 +2098,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                             },
                             physical_clip,
                             Default::default(),
-                            text.color().color(),
+                            text_color,
                             None,
                         );
                     }
@@ -2125,7 +2121,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                             },
                             physical_clip,
                             Default::default(),
-                            text.color().color(),
+                            text_color,
                             None,
                         );
                     }
@@ -2412,6 +2408,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
 #[cfg(feature = "std")]
 mod paragraph_cache {
+    use core::pin::Pin;
     use std::hash::RandomState;
     use std::num::NonZeroUsize;
 
@@ -2419,38 +2416,54 @@ mod paragraph_cache {
 
     use crate::{
         graphics::SharedImageBuffer,
-        lengths::{PhysicalPx, ScaleFactor},
+        items::{TextHorizontalAlignment, TextVerticalAlignment},
+        lengths::{LogicalPx, LogicalSize, PhysicalPx, ScaleFactor},
+        SharedString,
     };
 
     pub fn add_to_cache(key: ParagraphCacheKey, img: SharedImageBuffer) {
         PARAGRAPH_CACHE.with(|c| c.borrow_mut().put_with_weight(key, img).ok());
     }
 
-    pub fn get_from_cache(key: ParagraphCacheKey) -> Option<SharedImageBuffer> {
+    pub fn get_from_cache(key: &ParagraphCacheKey) -> Option<SharedImageBuffer> {
         PARAGRAPH_CACHE.with(|c| c.borrow_mut().get(&key).cloned())
     }
 
-    #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-    pub struct ParagraphCacheKey(u64);
+    #[derive(Clone, Eq, PartialEq, Hash)]
+    pub struct ParagraphCacheKey {
+        text: SharedString,
+        size: euclid::Size2D<u32, LogicalPx>,
+        scale_factor: euclid::Scale<u32, LogicalPx, PhysicalPx>,
+        horizontal_alignment: TextHorizontalAlignment,
+        vertical_alignment: TextVerticalAlignment,
+
+        // not encoding alpha on purpose, and applying alpha blending during render
+        r: u8,
+        g: u8,
+        b: u8,
+    }
 
     impl ParagraphCacheKey {
         pub fn new(
-            string: &str,
-            max_size: euclid::Size2D<f32, PhysicalPx>,
+            text: &Pin<&dyn crate::item_rendering::RenderText>,
+            size: LogicalSize,
             scale_factor: ScaleFactor,
-            color: crate::Color,
         ) -> Self {
-            // Build a *very* cheap hash – good enough for the LRU
-            let mut h: u64 = 0xcbf29ce484222325; // FNV offset basis
-            h = fnv1a64(string.as_bytes(), h);
-            h = fnv1a64(&max_size.width.to_le_bytes(), h);
-            h = fnv1a64(&max_size.height.to_le_bytes(), h);
-            h = fnv1a64(&(scale_factor.0.to_bits()).to_le_bytes(), h);
-            h = fnv1a64(&color.red().to_le_bytes(), h);
-            h = fnv1a64(&color.green().to_le_bytes(), h);
-            h = fnv1a64(&color.blue().to_le_bytes(), h);
-            h = fnv1a64(&color.alpha().to_le_bytes(), h);
-            ParagraphCacheKey(h)
+            let color = text.color().color();
+            let (horizontal_alignment, vertical_alignment) = text.alignment();
+
+            Self {
+                text: text.text(),
+                size: size.cast(),
+                scale_factor: scale_factor.cast(),
+
+                horizontal_alignment,
+                vertical_alignment,
+
+                r: color.red(),
+                g: color.green(),
+                b: color.blue(),
+            }
         }
     }
 
@@ -2481,15 +2494,5 @@ mod paragraph_cache {
                     .with_scale(ParagraphWeightScale)
             )
         );
-    }
-
-    /// Very small FNV-1a helper for the cache key
-    fn fnv1a64(bytes: &[u8], mut hash: u64) -> u64 {
-        const FNV_PRIME: u64 = 0x0000_0001_0000_01B3;
-        for b in bytes {
-            hash ^= *b as u64;
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-        hash
     }
 }
