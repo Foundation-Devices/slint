@@ -1654,6 +1654,100 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         );
         return;
     }
+
+    #[cfg(feature = "std")]
+    fn draw_text_bitmap_to_cache(
+        &mut self,
+        text: &Pin<&dyn crate::item_rendering::RenderText>,
+        geom: LogicalRect,
+        string: crate::SharedString,
+        cache_key: paragraph_cache::ParagraphCacheKey,
+    ) {
+        let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
+
+        let w = max_size.width as u32;
+        let h = max_size.height as u32;
+
+        let font_request = text.font_request(self.window);
+        let font = fonts::match_font(&font_request, self.scale_factor);
+
+        let mut bmp = SharedPixelBuffer::<crate::graphics::Rgba8Pixel>::new(w, h);
+        {
+            let mut off_renderer = SceneBuilder::new(
+                euclid::size2(w as i16, h as i16),
+                self.scale_factor,
+                self.window,
+                RenderToBuffer {
+                    buffer: bmp.make_mut_slice(),
+                    stride: w as usize,
+                    dirty_range_cache: vec![],
+                    dirty_region: {
+                        let mut pr = PhysicalRegion::default();
+                        pr.rectangles[0] = euclid::rect(0, 0, w as i16, h as i16).to_box2d();
+                        pr.count = 1;
+                        pr
+                    },
+                },
+                RenderingRotation::NoRotation,
+            );
+
+            let physical_clip = euclid::rect(0f32, 0f32, w as f32, h as f32);
+            let (horizontal_alignment, vertical_alignment) = text.alignment();
+            let text_color = text.color().color().with_alpha(1.0);
+            match font {
+                fonts::Font::PixelFont(ref pixel_font) => {
+                    off_renderer.draw_text_paragraph(
+                        &TextParagraphLayout {
+                            string: &string,
+                            layout: fonts::text_layout_for_font(
+                                pixel_font,
+                                &font_request,
+                                self.scale_factor,
+                            ),
+                            max_width: max_size.width_length().cast(),
+                            max_height: max_size.height_length().cast(),
+                            horizontal_alignment,
+                            vertical_alignment,
+                            wrap: text.wrap(),
+                            overflow: text.overflow(),
+                            single_line: false,
+                        },
+                        physical_clip,
+                        Default::default(),
+                        text_color,
+                        None,
+                    );
+                }
+                fonts::Font::VectorFont(ref vector_font) => {
+                    off_renderer.draw_text_paragraph(
+                        &TextParagraphLayout {
+                            string: &string,
+                            layout: fonts::text_layout_for_font(
+                                vector_font,
+                                &font_request,
+                                self.scale_factor,
+                            ),
+                            max_width: max_size.width_length().cast(),
+                            max_height: max_size.height_length().cast(),
+                            horizontal_alignment,
+                            vertical_alignment,
+                            wrap: text.wrap(),
+                            overflow: text.overflow(),
+                            single_line: false,
+                        },
+                        physical_clip,
+                        Default::default(),
+                        text_color,
+                        None,
+                    );
+                }
+            }
+        }
+
+        let img = SharedImageBuffer::RGBA8Premultiplied(bmp);
+        paragraph_cache::add_to_cache(cache_key, img.clone());
+        self.draw_text_bitmap(&text, geom, img);
+    }
 }
 
 struct SelectionInfo {
@@ -1993,9 +2087,6 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
             return;
         }
 
-        let max_size = geom.size.cast() * self.scale_factor;
-        let (horizontal_alignment, vertical_alignment) = text.alignment();
-
         #[cfg(feature = "std")]
         {
             let cache_key = paragraph_cache::ParagraphCacheKey::new(&text, size, self.scale_factor);
@@ -2004,98 +2095,15 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 return;
             }
 
-            let w = max_size.width as u32;
-            let h = max_size.height as u32;
-            if w == 0 || h == 0 {
-                return;
-            }
-
-            let font_request = text.font_request(self.window);
-            // this is expensive, so we only do it after we check the cache
-            let font = fonts::match_font(&font_request, self.scale_factor);
-
-            let mut bmp = SharedPixelBuffer::<crate::graphics::Rgba8Pixel>::new(w, h);
-            {
-                // Off-screen renderer re-using existing drawing code
-                let mut off_renderer = SceneBuilder::new(
-                    euclid::size2(w as i16, h as i16),
-                    self.scale_factor,
-                    self.window,
-                    RenderToBuffer {
-                        buffer: bmp.make_mut_slice(),
-                        stride: w as usize,
-                        dirty_range_cache: vec![],
-                        dirty_region: {
-                            let mut pr = PhysicalRegion::default();
-                            pr.rectangles[0] = euclid::rect(0, 0, w as i16, h as i16).to_box2d();
-                            pr.count = 1;
-                            pr
-                        },
-                    },
-                    RenderingRotation::NoRotation,
-                );
-
-                let physical_clip = euclid::rect(0f32, 0f32, w as f32, h as f32);
-                let (horizontal_alignment, vertical_alignment) = text.alignment();
-                let text_color = text.color().color().with_alpha(1.0);
-                match font {
-                    fonts::Font::PixelFont(ref pixel_font) => {
-                        off_renderer.draw_text_paragraph(
-                            &TextParagraphLayout {
-                                string: &string,
-                                layout: fonts::text_layout_for_font(
-                                    pixel_font,
-                                    &font_request,
-                                    self.scale_factor,
-                                ),
-                                max_width: max_size.width_length().cast(),
-                                max_height: max_size.height_length().cast(),
-                                horizontal_alignment,
-                                vertical_alignment,
-                                wrap: text.wrap(),
-                                overflow: text.overflow(),
-                                single_line: false,
-                            },
-                            physical_clip,
-                            Default::default(),
-                            text_color,
-                            None,
-                        );
-                    }
-                    fonts::Font::VectorFont(ref vector_font) => {
-                        off_renderer.draw_text_paragraph(
-                            &TextParagraphLayout {
-                                string: &string,
-                                layout: fonts::text_layout_for_font(
-                                    vector_font,
-                                    &font_request,
-                                    self.scale_factor,
-                                ),
-                                max_width: max_size.width_length().cast(),
-                                max_height: max_size.height_length().cast(),
-                                horizontal_alignment,
-                                vertical_alignment,
-                                wrap: text.wrap(),
-                                overflow: text.overflow(),
-                                single_line: false,
-                            },
-                            physical_clip,
-                            Default::default(),
-                            text_color,
-                            None,
-                        );
-                    }
-                }
-            }
-
-            let img = SharedImageBuffer::RGBA8Premultiplied(bmp);
-            paragraph_cache::add_to_cache(cache_key, img.clone());
-            self.draw_text_bitmap(&text, geom, img);
+            self.draw_text_bitmap_to_cache(&text, geom, string, cache_key);
             return;
         }
 
         #[cfg(not(feature = "std"))]
         {
+            let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
+            let (horizontal_alignment, vertical_alignment) = text.alignment();
+
             let font_request = text.font_request(self.window);
             let font = fonts::match_font(&font_request, self.scale_factor);
             let color = self.alpha_color(text.color().color());
