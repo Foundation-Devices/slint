@@ -2088,8 +2088,9 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
         }
 
         #[cfg(feature = "std")]
+        if let Some(cache_key) =
+            paragraph_cache::ParagraphCacheKey::new(&text, size, self.scale_factor)
         {
-            let cache_key = paragraph_cache::ParagraphCacheKey::new(&text, size, self.scale_factor);
             if let Some(cached) = paragraph_cache::get_from_cache(&cache_key) {
                 self.draw_text_bitmap(&text, geom, cached);
                 return;
@@ -2099,58 +2100,55 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
             return;
         }
 
-        #[cfg(not(feature = "std"))]
+        let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
+        let (horizontal_alignment, vertical_alignment) = text.alignment();
+
+        let font_request = text.font_request(self.window);
+        let font = fonts::match_font(&font_request, self.scale_factor);
+        let color = self.alpha_color(text.color().color());
+        let physical_clip = if let Some(logical_clip) = self.current_state.clip.intersection(&geom)
         {
-            let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
-            let (horizontal_alignment, vertical_alignment) = text.alignment();
+            logical_clip.cast() * self.scale_factor
+        } else {
+            return; // This should have been caught earlier already
+        };
+        let offset = self.current_state.offset.to_vector().cast() * self.scale_factor;
 
-            let font_request = text.font_request(self.window);
-            let font = fonts::match_font(&font_request, self.scale_factor);
-            let color = self.alpha_color(text.color().color());
-            let physical_clip =
-                if let Some(logical_clip) = self.current_state.clip.intersection(&geom) {
-                    logical_clip.cast() * self.scale_factor
-                } else {
-                    return; // This should have been caught earlier already
+        match font {
+            fonts::Font::PixelFont(ref pf) => {
+                let layout = fonts::text_layout_for_font(pf, &font_request, self.scale_factor);
+
+                let paragraph = TextParagraphLayout {
+                    string: &string,
+                    layout,
+                    max_width: max_size.width_length().cast(),
+                    max_height: max_size.height_length().cast(),
+                    horizontal_alignment,
+                    vertical_alignment,
+                    wrap: text.wrap(),
+                    overflow: text.overflow(),
+                    single_line: false,
                 };
-            let offset = self.current_state.offset.to_vector().cast() * self.scale_factor;
 
-            match font {
-                fonts::Font::PixelFont(ref pf) => {
-                    let layout = fonts::text_layout_for_font(pf, &font_request, self.scale_factor);
+                self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
+            }
+            #[cfg(feature = "software-renderer-systemfonts")]
+            fonts::Font::VectorFont(ref vf) => {
+                let layout = fonts::text_layout_for_font(vf, &font_request, self.scale_factor);
 
-                    let paragraph = TextParagraphLayout {
-                        string: &string,
-                        layout,
-                        max_width: max_size.width_length().cast(),
-                        max_height: max_size.height_length().cast(),
-                        horizontal_alignment,
-                        vertical_alignment,
-                        wrap: text.wrap(),
-                        overflow: text.overflow(),
-                        single_line: false,
-                    };
+                let paragraph = TextParagraphLayout {
+                    string: &string,
+                    layout,
+                    max_width: max_size.width_length().cast(),
+                    max_height: max_size.height_length().cast(),
+                    horizontal_alignment,
+                    vertical_alignment,
+                    wrap: text.wrap(),
+                    overflow: text.overflow(),
+                    single_line: false,
+                };
 
-                    self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
-                }
-                #[cfg(feature = "software-renderer-systemfonts")]
-                fonts::Font::VectorFont(ref vf) => {
-                    let layout = fonts::text_layout_for_font(vf, &font_request, self.scale_factor);
-
-                    let paragraph = TextParagraphLayout {
-                        string: &string,
-                        layout,
-                        max_width: max_size.width_length().cast(),
-                        max_height: max_size.height_length().cast(),
-                        horizontal_alignment,
-                        vertical_alignment,
-                        wrap: text.wrap(),
-                        overflow: text.overflow(),
-                        single_line: false,
-                    };
-
-                    self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
-                }
+                self.draw_text_paragraph(&paragraph, physical_clip, offset, color, None);
             }
         }
     }
@@ -2466,15 +2464,22 @@ mod paragraph_cache {
     }
 
     impl ParagraphCacheKey {
+        // returns none if the text cannot be cached
         pub fn new(
             text: &Pin<&dyn crate::item_rendering::RenderText>,
             size: LogicalSize,
             scale_factor: ScaleFactor,
-        ) -> Self {
+        ) -> Option<Self> {
+            let item_size = size * scale_factor;
+            let item_size = image_size(item_size.width as u32, item_size.height as u32);
+            if item_size > max_item_size() {
+                return None;
+            }
+
             let color = text.color().color();
             let (horizontal_alignment, vertical_alignment) = text.alignment();
 
-            Self {
+            Some(Self {
                 text: text.text(),
                 size: size.cast(),
                 scale_factor: scale_factor.cast(),
@@ -2485,7 +2490,7 @@ mod paragraph_cache {
                 r: color.red(),
                 g: color.green(),
                 b: color.blue(),
-            }
+            })
         }
     }
 
@@ -2506,6 +2511,10 @@ mod paragraph_cache {
         }
     }
 
+    fn image_size(height: u32, width: u32) -> usize {
+        height as usize * width as usize * core::mem::size_of::<crate::graphics::Rgba8Pixel>()
+    }
+
     type ParagraphCache =
         CLruCache<ParagraphCacheKey, SharedImageBuffer, RandomState, ParagraphWeightScale>;
 
@@ -2516,6 +2525,10 @@ mod paragraph_cache {
         option_env!("MAX_TEXT_BITMAP_CACHE_SIZE")
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(DEFAULT_CACHE_SIZE)
+    }
+
+    fn max_item_size() -> usize {
+        with_cache(|c| c.capacity()) / 10
     }
 
     fn with_cache<T>(f: impl FnOnce(&mut ParagraphCache) -> T) -> T {
