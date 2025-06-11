@@ -2444,11 +2444,11 @@ mod paragraph_cache {
     };
 
     pub fn add_to_cache(key: ParagraphCacheKey, img: SharedImageBuffer) {
-        PARAGRAPH_CACHE.with(|c| c.borrow_mut().put_with_weight(key, img).ok());
+        with_cache(|c| c.put_with_weight(key, img).ok());
     }
 
     pub fn get_from_cache(key: &ParagraphCacheKey) -> Option<SharedImageBuffer> {
-        PARAGRAPH_CACHE.with(|c| c.borrow_mut().get(&key).cloned())
+        with_cache(|c| c.get(&key).cloned())
     }
 
     #[derive(Clone, Eq, PartialEq, Hash)]
@@ -2510,14 +2510,28 @@ mod paragraph_cache {
         CLruCache<ParagraphCacheKey, SharedImageBuffer, RandomState, ParagraphWeightScale>;
 
     // 1 MiB
-    const MAX_CACHE_SIZE: usize = 1 * 1024 * 1024;
+    const DEFAULT_CACHE_SIZE: usize = 1 * 1024 * 1024;
+
+    fn get_cache_size() -> usize {
+        option_env!("MAX_TEXT_BITMAP_CACHE_SIZE")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_CACHE_SIZE)
+    }
+
+    fn with_cache<T>(f: impl FnOnce(&mut ParagraphCache) -> T) -> T {
+        PARAGRAPH_CACHE.with(|c| {
+            let mut cache = c.borrow_mut();
+            if cache.is_none() {
+                *cache = Some(CLruCache::with_config(
+                    CLruCacheConfig::new(NonZeroUsize::new(get_cache_size()).unwrap())
+                        .with_scale(ParagraphWeightScale),
+                ));
+            }
+            f(cache.as_mut().unwrap())
+        })
+    }
 
     thread_local! {
-        static PARAGRAPH_CACHE : core::cell::RefCell<ParagraphCache> = core::cell::RefCell::new(
-            CLruCache::with_config(
-                CLruCacheConfig::new(NonZeroUsize::new(MAX_CACHE_SIZE).unwrap())
-                    .with_scale(ParagraphWeightScale)
-            )
-        );
+        static PARAGRAPH_CACHE : core::cell::RefCell<Option<ParagraphCache>> = core::cell::RefCell::new(None);
     }
 }
