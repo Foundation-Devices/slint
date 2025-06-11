@@ -265,38 +265,23 @@ mod font_ref {
     where
         F: FnOnce(&FontRef<'_>) -> R,
     {
-        // First see if we already have the right FontRef in TLS
         LAST_FONT.with(|slot| {
             let mut slot = slot.borrow_mut();
             if let Some((cached_id, cached)) = slot.as_mut() {
                 if *cached_id == id {
-                    // Fast path: re-use the cached value.
+                    // fast path: re-use the cached value.
                     return Some(f(cached));
                 }
             }
 
-            // Slow path: create a new FontRef from the db
             let fr = FontRef::try_from_slice_and_index(face_data, font_index).ok()?;
 
-            // ----------------------------------------------------------
-            // SAFETY SECTION
-            // ----------------------------------------------------------
-            //
-            // 1. `face_data` comes from sharedfontdb::FONT_DB and will stay
-            //    alive for the whole program.  If this ever stops being true
-            //    (e.g. if the db starts unloading fonts), the code is UB!
-            //
-            // 2. We never mutate `face_data`, only read from it.
-            //
-            // Therefore we can extend the lifetime to 'static.
-            //
             #[allow(unsafe_code)]
             let static_fr: FontRef<'static> =
                 unsafe { std::mem::transmute::<FontRef<'_>, FontRef<'static>>(fr) };
 
             let res = f(&static_fr);
 
-            // Update TLS entry
             slot.replace((id, static_fr));
 
             Some(res)
