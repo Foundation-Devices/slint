@@ -2106,14 +2106,9 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
                 return;
             }
 
-            println!("cache miss: {string} {cache_key:?}");
-
             self.draw_text_bitmap_to_cache(&text, geom, string, cache_key);
             return;
         }
-
-        #[cfg(feature = "std")]
-        println!("complete miss? {string}");
 
         let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
         let (horizontal_alignment, vertical_alignment) = text.alignment();
