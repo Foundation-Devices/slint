@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
 
 use ab_glyph::Font;
-use ab_glyph::FontArc;
 use alloc::rc::Rc;
 
 use crate::lengths::PhysicalPx;
@@ -49,7 +48,6 @@ thread_local!(static GLYPH_CACHE: core::cell::RefCell<GlyphCache>  =
 
 pub struct VectorFont {
     id: fontdb::ID,
-    font: FontArc,
     ascender: PhysicalLength,
     descender: PhysicalLength,
     height: PhysicalLength,
@@ -66,10 +64,6 @@ impl VectorFont {
                 .with_face_data(id, |face_data, font_index| {
                     let face = rustybuzz::ttf_parser::Face::parse(face_data, font_index).unwrap();
 
-                    // Cache a parsed font object for fast glyph outline retrieval.
-                    let font_arc = FontArc::try_from_vec(face_data.to_vec())
-                        .expect("Unable to parse font data for FontArc");
-
                     let ascender = FontLength::new(face.ascender() as _);
                     let descender = FontLength::new(face.descender() as _);
                     let height = FontLength::new(face.height() as _);
@@ -80,7 +74,6 @@ impl VectorFont {
                     let scale = FontScaleFactor::new(pixel_size.get() as f32 / units_per_em as f32);
                     Self {
                         id,
-                        font: font_arc,
                         ascender: (ascender.cast() * scale).cast(),
                         descender: (descender.cast() * scale).cast(),
                         height: (height.cast() * scale).cast(),
@@ -204,18 +197,30 @@ impl super::GlyphRenderer for VectorFont {
                 Some(entry.clone())
             } else {
                 let outline: ab_glyph::OutlinedGlyph = sharedfontdb::FONT_DB.with(|db| {
-                    db.borrow().with_face_data(self.id, |face_data, font_index| {
-                        font_ref::with_cached_font(self.id, face_data, font_index, |font_ref| {
-                            font_ref.outline_glyph(ab_glyph::Glyph {
+                    db.borrow().with_face_data(
+                        self.id,
+                        |face_data, font_index| -> Option<ab_glyph::OutlinedGlyph> {
+                            // Note: Creating a new ab_glyph object for every glyph rendering can
+                            //       seem wasteful (and it is), but due to lifetimes, we can't
+                            //       create cached FontRefs, and owning Fonts waste a lot of memory.
+                            //       Fortunately parsing is relatively cheap, so we can actually
+                            //       afford to do this, especially since we cache the rendered
+                            //       glyphs themselves.
+                            let face =
+                                ab_glyph::FontRef::try_from_slice_and_index(face_data, font_index)
+                                    .ok()?;
+                            face.outline_glyph(ab_glyph::Glyph {
                                 id: ab_glyph::GlyphId(glyph_id.get()),
-                                scale: (font_ref.height_unscaled() / font_ref.units_per_em()?
-                                    * self.pixel_size.get() as f32)
+                                // ab_glyph uses a weird "font height" metric, so we need to transform
+                                // pixel sizes to that here.
+                                scale: (face.height_unscaled() / face.units_per_em()?
+                                    * (self.pixel_size.get() as f32))
                                     .into(),
                                 position: Default::default(),
                             })
-                        })
-                    })
-                })???;
+                        },
+                    )
+                })??;
                 let bounds = outline.px_bounds();
                 let mut alpha_map = vec![0u8; (bounds.width() * bounds.height()) as usize];
                 outline.draw(|x, y, value| {
@@ -243,48 +248,5 @@ impl super::GlyphRenderer for VectorFont {
 
     fn scale_delta(&self) -> super::Fixed<u16, 8> {
         super::Fixed::from_integer(1)
-    }
-}
-
-mod font_ref {
-    use super::*;
-
-    use ab_glyph::FontRef;
-    use std::cell::RefCell;
-
-    thread_local! {
-        static LAST_FONT: RefCell<Option<(fontdb::ID, FontRef<'static>)>> = const { RefCell::new(None) };
-    }
-
-    pub(crate) fn with_cached_font<F, R>(
-        id: fontdb::ID,
-        face_data: &[u8],
-        font_index: u32,
-        f: F,
-    ) -> Option<R>
-    where
-        F: FnOnce(&FontRef<'_>) -> R,
-    {
-        LAST_FONT.with(|slot| {
-            let mut slot = slot.borrow_mut();
-            if let Some((cached_id, cached)) = slot.as_mut() {
-                if *cached_id == id {
-                    // fast path: re-use the cached value.
-                    return Some(f(cached));
-                }
-            }
-
-            let fr = FontRef::try_from_slice_and_index(face_data, font_index).ok()?;
-
-            #[allow(unsafe_code)]
-            let static_fr: FontRef<'static> =
-                unsafe { std::mem::transmute::<FontRef<'_>, FontRef<'static>>(fr) };
-
-            let res = f(&static_fr);
-
-            slot.replace((id, static_fr));
-
-            Some(res)
-        })
     }
 }
