@@ -1634,11 +1634,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         let dy = (clipped_geom.min_y() - full_geom.min_y()) as i16;
         let source_rect = euclid::rect(dx, dy, clipped_geom.width(), clipped_geom.height());
 
-        let full_color = text.color().color();
-        let alpha = (full_color.alpha() as f32 * self.current_state.alpha) as u8;
-
-        // When we have an AlphaMap we need to provide the text color via `colorize`.
-        let colorize = full_color.with_alpha(1.0);
+        let full_color = self.alpha_color(text.color().color());
 
         self.processor.process_shared_image_buffer(
             clipped_geom,
@@ -1646,8 +1642,9 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                 buffer: SharedBufferData::AlphaMap(bitmap),
                 source_rect,
                 extra: SceneTextureExtra {
-                    colorize,
-                    alpha,
+                    colorize: full_color,
+                    // color already is mixed with global alpha
+                    alpha: full_color.alpha(),
                     rotation: self.rotation.orientation,
                     dx: Fixed::from_integer(1),
                     dy: Fixed::from_integer(1),
