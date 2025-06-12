@@ -152,13 +152,9 @@ pub type Rgb8Pixel = rgb::RGB8;
 pub type Rgba8Pixel = rgb::RGBA8;
 
 /// Convenience alias for a pixel with one color channel (alpha)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(transparent)]
 pub struct AlphaOnly(pub u8);
-
-#[allow(unsafe_code)]
-unsafe impl bytemuck::Zeroable for AlphaOnly {}
-#[allow(unsafe_code)]
-unsafe impl bytemuck::Pod for AlphaOnly {}
 
 /// SharedImageBuffer is a container for images that are stored in CPU accessible memory.
 ///
