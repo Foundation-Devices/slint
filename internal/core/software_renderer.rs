@@ -1667,6 +1667,8 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         string: crate::SharedString,
         cache_key: paragraph_cache::ParagraphCacheKey,
     ) {
+        use crate::graphics::AlphaOnly;
+
         let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
 
         let w = max_size.width as u32;
@@ -1675,7 +1677,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         let font_request = text.font_request(self.window);
         let font = fonts::match_font(&font_request, self.scale_factor);
 
-        let mut bmp = SharedPixelBuffer::<crate::graphics::Rgba8Pixel>::new(w, h);
+        let mut bmp = SharedPixelBuffer::<AlphaOnly>::new(w, h);
         {
             let mut off_renderer = SceneBuilder::new(
                 euclid::size2(w as i16, h as i16),
@@ -1697,7 +1699,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
 
             let physical_clip = euclid::rect(0f32, 0f32, w as f32, h as f32);
             let (horizontal_alignment, vertical_alignment) = text.alignment();
-            let text_color = text.color().color().with_alpha(1.0);
+            let text_color = crate::graphics::Color::from_argb_u8(255, 0, 0, 0);
             match font {
                 fonts::Font::PixelFont(ref pixel_font) => {
                     off_renderer.draw_text_paragraph(
@@ -1750,11 +1752,10 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
 
         // Extract alpha channel into a contiguous buffer so that we can render using the
         // AlphaMap fast-path (1 byte per pixel instead of 4).
-        let alpha_vec: Vec<u8> = bmp.as_slice().iter().map(|p| p.a).collect();
+        let alpha_vec = bytemuck::cast_slice::<AlphaOnly, u8>(bmp.as_slice()).to_vec();
         let alpha_rc: Rc<[u8]> = Rc::from(alpha_vec.into_boxed_slice());
 
         let buffer_data = AlphaMapBuffer { data: alpha_rc, width: w as u16 };
-
         paragraph_cache::add_to_cache(cache_key, buffer_data.clone());
         self.draw_text_bitmap(&text, geom, buffer_data);
     }
@@ -2450,7 +2451,7 @@ mod paragraph_cache {
     use clru::{CLruCache, CLruCacheConfig, WeightScale};
 
     use crate::{
-        graphics::{FontRequest, SharedImageBuffer},
+        graphics::FontRequest,
         items::{TextHorizontalAlignment, TextOverflow, TextVerticalAlignment, TextWrap},
         lengths::{LogicalPx, LogicalSize, PhysicalPx, ScaleFactor},
         SharedString,
@@ -2518,8 +2519,7 @@ mod paragraph_cache {
     }
 
     fn image_size(height: u32, width: u32) -> usize {
-        // Alpha map: 1 byte per pixel
-        height as usize * width as usize
+        height as usize * width as usize * std::mem::size_of::<u8>()
     }
 
     type ParagraphCache =
@@ -2527,12 +2527,6 @@ mod paragraph_cache {
 
     // 1 MiB
     const DEFAULT_CACHE_SIZE: usize = 1 * 1024 * 1024;
-
-    fn get_cache_size() -> usize {
-        option_env!("MAX_TEXT_BITMAP_CACHE_SIZE")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(DEFAULT_CACHE_SIZE)
-    }
 
     fn max_item_size() -> usize {
         with_cache(|c| c.capacity()) / 10
@@ -2542,8 +2536,12 @@ mod paragraph_cache {
         PARAGRAPH_CACHE.with(|c| {
             let mut cache = c.borrow_mut();
             if cache.is_none() {
+                let cache_size = option_env!("MAX_TEXT_BITMAP_CACHE_SIZE")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(DEFAULT_CACHE_SIZE);
+
                 *cache = Some(CLruCache::with_config(
-                    CLruCacheConfig::new(NonZeroUsize::new(get_cache_size()).unwrap())
+                    CLruCacheConfig::new(NonZeroUsize::new(cache_size).unwrap())
                         .with_scale(ParagraphWeightScale),
                 ));
             }
