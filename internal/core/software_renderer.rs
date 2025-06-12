@@ -2504,7 +2504,7 @@ mod paragraph_cache {
     struct ParagraphWeightScale;
     impl WeightScale<ParagraphCacheKey, AlphaMapBuffer> for ParagraphWeightScale {
         fn weight(&self, _k: &ParagraphCacheKey, v: &AlphaMapBuffer) -> usize {
-            v.data.len()
+            v.data.len() * std::mem::size_of::<u8>()
         }
     }
 
@@ -2519,7 +2519,7 @@ mod paragraph_cache {
     const DEFAULT_CACHE_SIZE: usize = 1 * 1024 * 1024;
 
     fn max_item_size() -> usize {
-        with_cache(|c| c.capacity()) / 10
+        with_cache(|c| c.capacity())
     }
 
     fn with_cache<T>(f: impl FnOnce(&mut ParagraphCache) -> T) -> T {
