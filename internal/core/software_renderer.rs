@@ -23,6 +23,7 @@ use crate::graphics::{
 };
 use crate::item_rendering::{
     CachedRenderingData, DirtyRegion, PartialRenderingState, RenderBorderRectangle, RenderImage,
+    RenderText,
 };
 use crate::items::{ItemRc, TextOverflow, TextWrap};
 use crate::lengths::{
@@ -1606,7 +1607,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
     #[cfg(feature = "std")]
     fn draw_text_bitmap(
         &mut self,
-        text: &Pin<&dyn crate::item_rendering::RenderText>,
+        text: &Pin<&dyn RenderText>,
         geom: LogicalRect,
         bitmap: AlphaMapBuffer,
     ) {
@@ -1659,7 +1660,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
     #[cfg(feature = "std")]
     fn draw_text_bitmap_to_cache(
         &mut self,
-        text: &Pin<&dyn crate::item_rendering::RenderText>,
+        text: &Pin<&dyn RenderText>,
         geom: LogicalRect,
         string: crate::SharedString,
         cache_key: paragraph_cache::ParagraphCacheKey,
@@ -1698,7 +1699,7 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
     #[inline]
     fn render_text_to_alpha_map<Font>(
         &self,
-        text: &Pin<&dyn crate::item_rendering::RenderText>,
+        text: &Pin<&dyn RenderText>,
         string: &crate::SharedString,
         max_size: euclid::Size2D<f32, PhysicalPx>,
 
@@ -2079,7 +2080,7 @@ impl<'a, T: ProcessScene> crate::item_rendering::ItemRenderer for SceneBuilder<'
 
     fn draw_text(
         &mut self,
-        text: Pin<&dyn crate::item_rendering::RenderText>,
+        text: Pin<&dyn RenderText>,
         _: &ItemRc,
         size: LogicalSize,
         _cache: &CachedRenderingData,
@@ -2442,12 +2443,12 @@ mod paragraph_cache {
 
     use crate::{
         graphics::FontRequest,
+        item_rendering::RenderText,
         items::{TextHorizontalAlignment, TextOverflow, TextVerticalAlignment, TextWrap},
         lengths::{LogicalPx, LogicalSize, PhysicalPx, ScaleFactor},
+        software_renderer::scene::AlphaMapBuffer,
         SharedString,
     };
-
-    use super::scene::AlphaMapBuffer;
 
     pub fn add_to_cache(key: ParagraphCacheKey, data: AlphaMapBuffer) {
         with_cache(|c| c.put_with_weight(key, data).ok());
@@ -2474,7 +2475,7 @@ mod paragraph_cache {
     impl ParagraphCacheKey {
         // returns none if the text cannot be cached
         pub fn new(
-            text: &Pin<&dyn crate::item_rendering::RenderText>,
+            text: &Pin<&dyn RenderText>,
             font_request: &FontRequest,
             size: LogicalSize,
             scale_factor: ScaleFactor,
