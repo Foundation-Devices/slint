@@ -1671,20 +1671,19 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
 
         let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
 
-        let w = max_size.width as u32;
-        let h = max_size.height as u32;
+        let (w, h) = (max_size.width as u32, max_size.height as u32);
 
         let font_request = text.font_request(self.window);
         let font = fonts::match_font(&font_request, self.scale_factor);
 
-        let mut bmp = SharedPixelBuffer::<AlphaOnly>::new(w, h);
+        let mut alpha_map = SharedPixelBuffer::<AlphaOnly>::new(w, h);
         {
             let mut off_renderer = SceneBuilder::new(
                 euclid::size2(w as i16, h as i16),
                 self.scale_factor,
                 self.window,
                 RenderToBuffer {
-                    buffer: bmp.make_mut_slice(),
+                    buffer: alpha_map.make_mut_slice(),
                     stride: w as usize,
                     dirty_range_cache: vec![],
                     dirty_region: {
@@ -1697,54 +1696,23 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                 RenderingRotation::NoRotation,
             );
 
-            let physical_clip = euclid::rect(0f32, 0f32, w as f32, h as f32);
-            let (horizontal_alignment, vertical_alignment) = text.alignment();
-            let text_color = crate::graphics::Color::from_argb_u8(255, 0, 0, 0);
             match font {
                 fonts::Font::PixelFont(ref pixel_font) => {
-                    off_renderer.draw_text_paragraph(
-                        &TextParagraphLayout {
-                            string: &string,
-                            layout: fonts::text_layout_for_font(
-                                pixel_font,
-                                &font_request,
-                                self.scale_factor,
-                            ),
-                            max_width: max_size.width_length().cast(),
-                            max_height: max_size.height_length().cast(),
-                            horizontal_alignment,
-                            vertical_alignment,
-                            wrap: text.wrap(),
-                            overflow: text.overflow(),
-                            single_line: false,
-                        },
-                        physical_clip,
-                        Default::default(),
-                        text_color,
-                        None,
+                    self.render_text_to_alpha_map(
+                        &text,
+                        &string,
+                        max_size,
+                        fonts::text_layout_for_font(pixel_font, &font_request, self.scale_factor),
+                        &mut off_renderer,
                     );
                 }
                 fonts::Font::VectorFont(ref vector_font) => {
-                    off_renderer.draw_text_paragraph(
-                        &TextParagraphLayout {
-                            string: &string,
-                            layout: fonts::text_layout_for_font(
-                                vector_font,
-                                &font_request,
-                                self.scale_factor,
-                            ),
-                            max_width: max_size.width_length().cast(),
-                            max_height: max_size.height_length().cast(),
-                            horizontal_alignment,
-                            vertical_alignment,
-                            wrap: text.wrap(),
-                            overflow: text.overflow(),
-                            single_line: false,
-                        },
-                        physical_clip,
-                        Default::default(),
-                        text_color,
-                        None,
+                    self.render_text_to_alpha_map(
+                        &text,
+                        &string,
+                        max_size,
+                        fonts::text_layout_for_font(vector_font, &font_request, self.scale_factor),
+                        &mut off_renderer,
                     );
                 }
             }
@@ -1752,12 +1720,47 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
 
         // Extract alpha channel into a contiguous buffer so that we can render using the
         // AlphaMap fast-path (1 byte per pixel instead of 4).
-        let alpha_vec = bytemuck::cast_slice::<AlphaOnly, u8>(bmp.as_slice()).to_vec();
+        let alpha_vec = bytemuck::cast_slice::<AlphaOnly, u8>(alpha_map.as_slice()).to_vec();
         let alpha_rc: Rc<[u8]> = Rc::from(alpha_vec.into_boxed_slice());
 
         let buffer_data = AlphaMapBuffer { data: alpha_rc, width: w as u16 };
         paragraph_cache::add_to_cache(cache_key, buffer_data.clone());
         self.draw_text_bitmap(&text, geom, buffer_data);
+    }
+
+    #[cfg(feature = "std")]
+    #[inline]
+    fn render_text_to_alpha_map<Font>(
+        &self,
+        text: &Pin<&dyn crate::item_rendering::RenderText>,
+        string: &crate::SharedString,
+        max_size: euclid::Size2D<f32, PhysicalPx>,
+
+        layout: crate::textlayout::TextLayout<'_, Font>,
+        off_renderer: &mut SceneBuilder<'_, RenderToBuffer<'_, crate::graphics::AlphaOnly>>,
+    ) where
+        Font: AbstractFont + crate::textlayout::TextShaper<Length = PhysicalLength> + GlyphRenderer,
+    {
+        let physical_clip = euclid::rect(0f32, 0f32, max_size.width, max_size.height);
+        let (horizontal_alignment, vertical_alignment) = text.alignment();
+        let text_color = crate::graphics::Color::from_argb_u8(255, 0, 0, 0);
+        off_renderer.draw_text_paragraph(
+            &TextParagraphLayout {
+                string: &string,
+                layout,
+                max_width: max_size.width_length().cast(),
+                max_height: max_size.height_length().cast(),
+                horizontal_alignment,
+                vertical_alignment,
+                wrap: text.wrap(),
+                overflow: text.overflow(),
+                single_line: false,
+            },
+            physical_clip,
+            Default::default(),
+            text_color,
+            None,
+        );
     }
 }
 
