@@ -1671,59 +1671,28 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
 
         let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
 
-        let (w, h) = (max_size.width as u32, max_size.height as u32);
-
         let font_request = text.font_request(self.window);
         let font = fonts::match_font(&font_request, self.scale_factor);
 
-        let mut alpha_map = SharedPixelBuffer::<AlphaOnly>::new(w, h);
-        {
-            let mut off_renderer = SceneBuilder::new(
-                euclid::size2(w as i16, h as i16),
-                self.scale_factor,
-                self.window,
-                RenderToBuffer {
-                    buffer: alpha_map.make_mut_slice(),
-                    stride: w as usize,
-                    dirty_range_cache: vec![],
-                    dirty_region: {
-                        let mut pr = PhysicalRegion::default();
-                        pr.rectangles[0] = euclid::rect(0, 0, w as i16, h as i16).to_box2d();
-                        pr.count = 1;
-                        pr
-                    },
-                },
-                RenderingRotation::NoRotation,
-            );
-
-            match font {
-                fonts::Font::PixelFont(ref pixel_font) => {
-                    self.render_text_to_alpha_map(
-                        &text,
-                        &string,
-                        max_size,
-                        fonts::text_layout_for_font(pixel_font, &font_request, self.scale_factor),
-                        &mut off_renderer,
-                    );
-                }
-                fonts::Font::VectorFont(ref vector_font) => {
-                    self.render_text_to_alpha_map(
-                        &text,
-                        &string,
-                        max_size,
-                        fonts::text_layout_for_font(vector_font, &font_request, self.scale_factor),
-                        &mut off_renderer,
-                    );
-                }
+        let alpha_map = match font {
+            fonts::Font::PixelFont(ref pixel_font) => {
+                let font_layout =
+                    fonts::text_layout_for_font(pixel_font, &font_request, self.scale_factor);
+                self.render_text_to_alpha_map(&text, &string, max_size, font_layout)
             }
-        }
+            fonts::Font::VectorFont(ref vector_font) => {
+                let font_layout =
+                    fonts::text_layout_for_font(vector_font, &font_request, self.scale_factor);
+                self.render_text_to_alpha_map(&text, &string, max_size, font_layout)
+            }
+        };
 
         // Extract alpha channel into a contiguous buffer so that we can render using the
         // AlphaMap fast-path (1 byte per pixel instead of 4).
         let alpha_vec = bytemuck::cast_slice::<AlphaOnly, u8>(alpha_map.as_slice()).to_vec();
         let alpha_rc: Rc<[u8]> = Rc::from(alpha_vec.into_boxed_slice());
 
-        let buffer_data = AlphaMapBuffer { data: alpha_rc, width: w as u16 };
+        let buffer_data = AlphaMapBuffer { data: alpha_rc, width: alpha_map.width() as u16 };
         paragraph_cache::add_to_cache(cache_key, buffer_data.clone());
         self.draw_text_bitmap(&text, geom, buffer_data);
     }
@@ -1737,10 +1706,34 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         max_size: euclid::Size2D<f32, PhysicalPx>,
 
         layout: crate::textlayout::TextLayout<'_, Font>,
-        off_renderer: &mut SceneBuilder<'_, RenderToBuffer<'_, crate::graphics::AlphaOnly>>,
-    ) where
+    ) -> SharedPixelBuffer<crate::graphics::AlphaOnly>
+    where
         Font: AbstractFont + crate::textlayout::TextShaper<Length = PhysicalLength> + GlyphRenderer,
     {
+        use crate::graphics::AlphaOnly;
+
+        let (w, h) = (max_size.width as u32, max_size.height as u32);
+
+        let mut alpha_map = SharedPixelBuffer::<AlphaOnly>::new(w, h);
+
+        let mut off_renderer = SceneBuilder::new(
+            euclid::size2(w as i16, h as i16),
+            self.scale_factor,
+            self.window,
+            RenderToBuffer {
+                buffer: alpha_map.make_mut_slice(),
+                stride: w as usize,
+                dirty_range_cache: vec![],
+                dirty_region: {
+                    let mut pr = PhysicalRegion::default();
+                    pr.rectangles[0] = euclid::rect(0, 0, w as i16, h as i16).to_box2d();
+                    pr.count = 1;
+                    pr
+                },
+            },
+            RenderingRotation::NoRotation,
+        );
+
         let physical_clip = euclid::rect(0f32, 0f32, max_size.width, max_size.height);
         let (horizontal_alignment, vertical_alignment) = text.alignment();
         let text_color = crate::graphics::Color::from_argb_u8(255, 0, 0, 0);
@@ -1761,6 +1754,8 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
             text_color,
             None,
         );
+
+        alpha_map
     }
 }
 
