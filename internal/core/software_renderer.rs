@@ -1685,12 +1685,11 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
             }
         };
 
-        // Extract alpha channel into a contiguous buffer so that we can render using the
         // AlphaMap fast-path (1 byte per pixel instead of 4).
         let alpha_vec = bytemuck::cast_slice::<AlphaOnly, u8>(alpha_map.as_slice()).to_vec();
         let alpha_rc: Rc<[u8]> = Rc::from(alpha_vec.into_boxed_slice());
-
         let buffer_data = AlphaMapBuffer { data: alpha_rc, width: alpha_map.width() as u16 };
+
         paragraph_cache::add_to_cache(cache_key, buffer_data.clone());
         self.draw_text_bitmap(&text, geom, buffer_data);
     }
