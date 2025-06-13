@@ -1688,12 +1688,12 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         };
 
         // AlphaMap fast-path (1 byte per pixel instead of 4).
-        let alpha_vec = bytemuck::cast_slice::<AlphaOnly, u8>(alpha_map.as_slice()).to_vec();
-        let alpha_rc: Rc<[u8]> = Rc::from(alpha_vec.into_boxed_slice());
-        let buffer_data = AlphaMapBuffer { data: alpha_rc, width: alpha_map.width() as u16 };
+        let alpha_bytes = bytemuck::cast_slice::<AlphaOnly, u8>(alpha_map.as_slice());
+        let alpha_map =
+            AlphaMapBuffer { data: Rc::from(alpha_bytes), width: alpha_map.width() as u16 };
 
-        paragraph_cache::add_to_cache(cache_key, buffer_data.clone());
-        self.draw_text_bitmap(&text, geom, buffer_data);
+        paragraph_cache::add_to_cache(cache_key, alpha_map.clone());
+        self.draw_text_bitmap(&text, geom, alpha_map);
     }
 
     #[cfg(feature = "std")]
