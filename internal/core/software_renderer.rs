@@ -1674,13 +1674,13 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         let font_request = text.font_request(self.window);
         let font = fonts::match_font(&font_request, self.scale_factor);
 
-        let alpha_map = match font {
-            fonts::Font::PixelFont(ref pixel_font) => {
+        let alpha_map = match &font {
+            fonts::Font::PixelFont(pixel_font) => {
                 let font_layout =
                     fonts::text_layout_for_font(pixel_font, &font_request, self.scale_factor);
                 self.render_text_to_alpha_map(&text, &string, max_size, font_layout)
             }
-            fonts::Font::VectorFont(ref vector_font) => {
+            fonts::Font::VectorFont(vector_font) => {
                 let font_layout =
                     fonts::text_layout_for_font(vector_font, &font_request, self.scale_factor);
                 self.render_text_to_alpha_map(&text, &string, max_size, font_layout)
