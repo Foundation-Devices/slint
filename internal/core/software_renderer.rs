@@ -1667,7 +1667,9 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
     ) {
         use crate::graphics::AlphaOnly;
 
-        let max_size: euclid::Size2D<f32, PhysicalPx> = geom.size.cast() * self.scale_factor;
+        // ceil to ensure we don't have off by 1 errors when rendering the bitmap
+        let max_size: euclid::Size2D<f32, PhysicalPx> =
+            (geom.size.cast() * self.scale_factor).ceil();
 
         let font_request = text.font_request(self.window);
         let font = fonts::match_font(&font_request, self.scale_factor);
