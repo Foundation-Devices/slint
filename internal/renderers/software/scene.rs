@@ -232,6 +232,16 @@ impl Scene {
         self.range_valid_until_line = Length::new(validity.unwrap_or_default());
         false
     }
+
+    pub fn is_guaranteed_opaque(&self, command: &SceneCommand) -> bool {
+        match command {
+            SceneCommand::Rectangle { color } => color.alpha == 255,
+            SceneCommand::Texture { texture_index } => {
+                self.vectors.textures[*texture_index as usize].format == TexturePixelFormat::Rgb
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
