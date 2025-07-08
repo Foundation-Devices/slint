@@ -246,21 +246,34 @@ impl Item for TouchArea {
 
     fn render(
         self: Pin<&Self>,
-        _backend: &mut ItemRendererRef,
-        _self_rc: &ItemRc,
-        _size: LogicalSize,
+        backend: &mut ItemRendererRef,
+        self_rc: &ItemRc,
+        size: LogicalSize,
     ) -> RenderingResult {
+        if let Some(color) = (*backend).window().debug_touch.get() {
+            if self.enabled() {
+                debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
+            }
+        }
         RenderingResult::ContinueRenderingChildren
     }
 
     fn bounding_rect(
         self: core::pin::Pin<&Self>,
-        _window_adapter: &Rc<dyn WindowAdapter>,
+        window_adapter: &Rc<dyn WindowAdapter>,
         _self_rc: &ItemRc,
-        mut geometry: LogicalRect,
+        geometry: LogicalRect,
     ) -> LogicalRect {
-        geometry.size = LogicalSize::zero();
-        geometry
+        // A touch area draws nothing, so it must contribute no dirty region,
+        // or else moving it repaints its old and new area. The debug overlay
+        // is the exception: it draws, so it needs the real bounds.
+        if self.enabled()
+            && WindowInner::from_pub(window_adapter.window()).debug_touch.get().is_some()
+        {
+            geometry
+        } else {
+            LogicalRect::new(geometry.origin, LogicalSize::zero())
+        }
     }
 
     fn clips_children(self: core::pin::Pin<&Self>) -> bool {
@@ -879,21 +892,35 @@ impl Item for SwipeGestureHandler {
 
     fn render(
         self: Pin<&Self>,
-        _backend: &mut ItemRendererRef,
-        _self_rc: &ItemRc,
-        _size: LogicalSize,
+        backend: &mut ItemRendererRef,
+        self_rc: &ItemRc,
+        size: LogicalSize,
     ) -> RenderingResult {
+        if let Some(color) = (*backend).window().debug_swipe.get() {
+            if self.enabled() {
+                debug_rect(color, backend, self_rc, size, &self.cached_rendering_data);
+            }
+        }
+
         RenderingResult::ContinueRenderingChildren
     }
 
     fn bounding_rect(
         self: core::pin::Pin<&Self>,
-        _window_adapter: &Rc<dyn WindowAdapter>,
+        window_adapter: &Rc<dyn WindowAdapter>,
         _self_rc: &ItemRc,
-        mut geometry: LogicalRect,
+        geometry: LogicalRect,
     ) -> LogicalRect {
-        geometry.size = LogicalSize::zero();
-        geometry
+        // A swipe gesture handler draws nothing, so it must contribute no
+        // dirty region, or else moving it repaints its old and new area. The
+        // debug overlay is the exception: it draws, so it needs the real bounds.
+        if self.enabled()
+            && WindowInner::from_pub(window_adapter.window()).debug_swipe.get().is_some()
+        {
+            geometry
+        } else {
+            LogicalRect::new(geometry.origin, LogicalSize::zero())
+        }
     }
 
     fn clips_children(self: core::pin::Pin<&Self>) -> bool {
@@ -1197,5 +1224,27 @@ impl ScaleRotateGestureHandler {
         Self::FIELD_OFFSETS.scale().apply_pin(self).set(1.0);
         Self::FIELD_OFFSETS.rotation().apply_pin(self).set(0.0);
         InputEventResult::EventAccepted
+    }
+}
+
+fn debug_rect(
+    color: crate::Color,
+    backend: &mut ItemRendererRef,
+    self_rc: &ItemRc,
+    size: LogicalSize,
+    cached_rendering_data: &CachedRenderingData,
+) {
+    let d = DebugTouchArea { color };
+    let debug = Pin::new(&d);
+    (*backend).draw_rectangle(debug, self_rc, size, cached_rendering_data);
+}
+
+struct DebugTouchArea {
+    color: crate::Color,
+}
+
+impl crate::item_rendering::RenderRectangle for DebugTouchArea {
+    fn background(self: Pin<&Self>) -> crate::Brush {
+        crate::Brush::SolidColor(self.color)
     }
 }
