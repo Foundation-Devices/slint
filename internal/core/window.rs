@@ -18,7 +18,7 @@ use crate::item_tree::{
     ItemRc, ItemTreeRc, ItemTreeRef, ItemTreeRefPin, ItemTreeVTable, ItemTreeWeak, ItemWeak,
     ParentItemTraversalMode,
 };
-use crate::items::{InputType, ItemRef, MenuEntry, MouseCursor, PopupClosePolicy};
+use crate::items::{CapsMode, InputType, ItemRef, MenuEntry, MouseCursor, PopupClosePolicy};
 use crate::lengths::{LogicalLength, LogicalPoint, LogicalRect, LogicalVector, SizeLengths};
 use crate::menus::MenuVTable;
 use crate::properties::{Property, PropertyTracker};
@@ -305,6 +305,8 @@ pub struct InputMethodProperties {
     pub anchor_point: LogicalPosition,
     /// The type of input for the text edit.
     pub input_type: InputType,
+    /// The caps mode for the text edit
+    pub caps_mode: CapsMode,
     /// The clip rect in window coordinates
     pub clip_rect: Option<LogicalRect>,
 }
@@ -1285,6 +1287,11 @@ impl WindowInner {
         } else {
             None
         }
+    }
+
+    /// Unfocus the currently focused item, if any.
+    pub fn unfocus_current(&self) {
+        self.take_focus_item(&FocusEvent::FocusOut(FocusReason::Programmatic));
     }
 
     /// Publish the new focus_item to this Window and return the FocusEventResult

@@ -11,7 +11,7 @@ use i_slint_core::api::{PhysicalPosition, PhysicalSize};
 use i_slint_core::graphics::{Color, euclid};
 use i_slint_core::input::{InternalKeyEvent, KeyEvent, KeyEventType};
 use i_slint_core::item_rendering::HasFont;
-use i_slint_core::items::{ColorScheme, InputType};
+use i_slint_core::items::{CapsMode, ColorScheme, InputType};
 use i_slint_core::lengths::{LogicalLength, PhysicalEdges};
 use i_slint_core::platform::WindowAdapter;
 use jni::objects::{JClass, JClassLoader, JString, LoaderContext};
@@ -216,6 +216,21 @@ bind_java_type! {
             sig = jint,
             get = TYPE_NUMBER_FLAG_DECIMAL,
         },
+        #[allow(non_snake_case)]
+        static TYPE_TEXT_FLAG_CAP_SENTENCES {
+            sig = jint,
+            get = TYPE_TEXT_FLAG_CAP_SENTENCES,
+        },
+        #[allow(non_snake_case)]
+        static TYPE_TEXT_FLAG_CAP_WORDS {
+            sig = jint,
+            get = TYPE_TEXT_FLAG_CAP_WORDS,
+        },
+        #[allow(non_snake_case)]
+        static TYPE_TEXT_FLAG_CAP_CHARACTERS {
+            sig = jint,
+            get = TYPE_TEXT_FLAG_CAP_CHARACTERS,
+        },
     }
 }
 
@@ -388,7 +403,15 @@ impl JavaHelper {
             let text = JString::new(env, text.as_str())?;
 
             let input_type = match data.input_type {
-                InputType::Text | InputType::Search => AndroidInputType::TYPE_CLASS_TEXT(env)?,
+                InputType::Text | InputType::Search => {
+                    let caps_mode = match data.caps_mode {
+                        CapsMode::None => 0 as jint,
+                        CapsMode::Sentences => AndroidInputType::TYPE_TEXT_FLAG_CAP_SENTENCES(env)?,
+                        CapsMode::Words => AndroidInputType::TYPE_TEXT_FLAG_CAP_WORDS(env)?,
+                        CapsMode::All => AndroidInputType::TYPE_TEXT_FLAG_CAP_CHARACTERS(env)?,
+                    };
+                    AndroidInputType::TYPE_CLASS_TEXT(env)? | caps_mode
+                }
                 InputType::Password => {
                     AndroidInputType::TYPE_TEXT_VARIATION_PASSWORD(env)?
                         | AndroidInputType::TYPE_CLASS_TEXT(env)?

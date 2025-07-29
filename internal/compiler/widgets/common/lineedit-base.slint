@@ -120,6 +120,7 @@ export component LineEditBase implements LineEditInterface inherits Rectangle {
             single-line: true;
             color: root.text-color;
             input-type: root.password-revealed ? InputType.text : root.input-type;
+            caps-mode: root.caps-mode;
             // Disable TextInput's built-in accessibility support as the widget takes care of that.
             accessible-role: none;
 
