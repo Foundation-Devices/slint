@@ -3,6 +3,8 @@
 
 use i_slint_core::graphics::{Image, Rgba8Pixel, SharedPixelBuffer};
 use i_slint_core::input::FocusEventResult;
+use i_slint_core::items::{CapsMode, InputType};
+>>>>>>> 1567b1282 (Introduce TextInput.caps-mode)
 
 use super::*;
 
@@ -18,6 +20,8 @@ pub struct NativeLineEdit {
     pub has_focus: Property<bool>,
     pub enabled: Property<bool>,
     pub clear_icon: Property<Image>,
+    pub input_type: Property<InputType>,
+    pub caps_mode: Property<CapsMode>,
     widget_ptr: std::cell::Cell<SlintTypeErasedWidgetPtr>,
     animation_tracker: Property<i32>,
 }

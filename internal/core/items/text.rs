@@ -8,7 +8,7 @@ When adding an item or a property, it needs to be kept in sync with different pl
 Lookup the [`crate::items`] module documentation.
 */
 use super::{
-    EventResult, FontMetrics, InputType, Item, ItemConsts, ItemRc, ItemRef, KeyEventArg,
+    CapsMode, EventResult, FontMetrics, InputType, Item, ItemConsts, ItemRc, ItemRef, KeyEventArg,
     KeyEventResult, KeyEventType, PointArg, PointerEventButton, RenderingResult, StringArg,
     TextHorizontalAlignment, TextOverflow, TextStrokeStyle, TextVerticalAlignment, TextWrap,
     VoidArg, WindowItem,
@@ -720,6 +720,7 @@ pub struct TextInput {
     pub vertical_alignment: Property<TextVerticalAlignment>,
     pub wrap: Property<TextWrap>,
     pub input_type: Property<InputType>,
+    pub caps_mode: Property<CapsMode>,
     pub letter_spacing: Property<LogicalLength>,
     pub width: Property<LogicalLength>,
     pub height: Property<LogicalLength>,
@@ -1743,6 +1744,7 @@ impl TextInput {
             anchor_point,
             input_type: self.input_type(),
             clip_rect,
+            caps_mode: self.caps_mode(),
         }
     }
 
