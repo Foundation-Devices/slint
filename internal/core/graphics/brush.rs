@@ -392,10 +392,7 @@ impl ConicGradientBrush {
         stops = stops
             .iter()
             .map(|stop| {
-                #[cfg(feature = "std")]
                 let rotated_position = (stop.position + normalized_from_angle).rem_euclid(1.0);
-                #[cfg(not(feature = "std"))]
-                let rotated_position = (stop.position + normalized_from_angle).rem_euclid(&1.0);
                 GradientStop { position: rotated_position, color: stop.color }
             })
             .collect();
