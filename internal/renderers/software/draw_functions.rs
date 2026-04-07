@@ -84,7 +84,7 @@ pub(super) fn draw_texture_line(
         // Straight blitting cases
         #[allow(unsafe_code)]
         if alpha == 0xff && delta == Fixed::from_integer(1) && end == len {
-            let pos = pos.truncate() as usize;
+            let pos = row_offset + pos.truncate() as usize;
             if format == TexturePixelFormat::Rgb && colorize.alpha() == 0 {
                 let (unaligned_part, data, _tail) = unsafe { data.align_to() };
                 if unaligned_part.is_empty() {
