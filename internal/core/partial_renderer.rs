@@ -264,12 +264,28 @@ impl DirtyRegion {
             self.rectangles[self.count] = b;
             self.count += 1;
         } else {
-            let best_merge = (0..self.count)
-                .map(|i| (i, self.rectangles[i].union(&b).area() - self.rectangles[i].area()))
-                .min_by(|a, b| PartialOrd::partial_cmp(&a.1, &b.1).unwrap())
-                .expect("There should always be rectangles")
-                .0;
-            self.rectangles[best_merge] = self.rectangles[best_merge].union(&b);
+            let mut best = (0, None);
+            let mut best_area = self.rectangles[0].union(&b).area();
+            for i in 0..self.count {
+                for j in i + 1..self.count {
+                    let new_area = self.rectangles[i].union(&self.rectangles[j]).area();
+                    if new_area < best_area {
+                        best_area = new_area;
+                        best = (i, Some(j));
+                    }
+                }
+                let new_area = self.rectangles[i].union(&b).area();
+                if new_area < best_area {
+                    best_area = new_area;
+                    best = (i, None);
+                }
+            }
+            if let Some(best_other) = best.1 {
+                self.rectangles[best.0] = self.rectangles[best.0].union(&self.rectangles[best_other]);
+                self.rectangles[best_other] = b;
+            } else {
+                self.rectangles[best.0] = self.rectangles[best.0].union(&b);
+            }
         }
     }
 
