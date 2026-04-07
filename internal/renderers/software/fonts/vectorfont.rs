@@ -3,6 +3,7 @@
 
 use core::num::NonZeroU16;
 
+use ab_glyph::Font;
 use alloc::rc::Rc;
 use skrifa::MetadataProvider;
 
@@ -48,7 +49,6 @@ i_slint_core::thread_local!(static GLYPH_CACHE: core::cell::RefCell<GlyphCache> 
 pub struct VectorFont {
     font_index: u32,
     font_blob: fontique::Blob<u8>,
-    fontdue_font: Rc<fontdue::Font>,
     ascender: PhysicalLength,
     descender: PhysicalLength,
     height: PhysicalLength,
@@ -58,18 +58,13 @@ pub struct VectorFont {
 }
 
 impl VectorFont {
-    pub fn new(
-        font: fontique::QueryFont,
-        fontdue_font: Rc<fontdue::Font>,
-        pixel_size: PhysicalLength,
-    ) -> Self {
-        Self::new_from_blob_and_index(font.blob, font.index, fontdue_font, pixel_size)
+    pub fn new(font: fontique::QueryFont, pixel_size: PhysicalLength) -> Self {
+        Self::new_from_blob_and_index(font.blob, font.index, pixel_size)
     }
 
     pub fn new_from_blob_and_index(
         font_blob: fontique::Blob<u8>,
         font_index: u32,
-        fontdue_font: Rc<fontdue::Font>,
         pixel_size: PhysicalLength,
     ) -> Self {
         let face = skrifa::FontRef::from_index(font_blob.data(), font_index).unwrap();
@@ -87,7 +82,6 @@ impl VectorFont {
         Self {
             font_index,
             font_blob,
-            fontdue_font,
             ascender: (ascender.cast() * scale).cast(),
             descender: (descender.cast() * scale).cast(),
             height: (height.cast() * scale).cast(),
@@ -109,19 +103,42 @@ impl VectorFont {
             if let Some(entry) = cache.get(&cache_key) {
                 Some(entry.clone())
             } else {
-                let (metrics, alpha_map) =
-                    self.fontdue_font.rasterize_indexed(glyph_id.get(), self.pixel_size.get() as _);
+                // Note: Creating a new ab_glyph object for every glyph rendering can
+                //       seem wasteful (and it is), but due to lifetimes, we can't
+                //       create cached FontRefs, and owning Fonts waste a lot of memory.
+                //       Fortunately parsing is relatively cheap, so we can actually
+                //       afford to do this, especially since we cache the rendered
+                //       glyphs themselves.
+                let face = ab_glyph::FontRef::try_from_slice_and_index(
+                    self.font_blob.as_ref(),
+                    self.font_index,
+                )
+                .ok()?;
+                let outline = face.outline_glyph(ab_glyph::Glyph {
+                    id: ab_glyph::GlyphId(glyph_id.get()),
+                    // ab_glyph uses a weird "font height" metric, so we need to transform
+                    // pixel sizes to that here.
+                    scale: (face.height_unscaled() / face.units_per_em()?
+                        * (self.pixel_size.get() as f32))
+                        .into(),
+                    position: Default::default(),
+                })?;
 
+                let bounds = outline.px_bounds();
+                let mut alpha_map = alloc::vec![0u8; (bounds.width() * bounds.height()) as usize];
+                outline.draw(|x, y, value| {
+                    alpha_map[y as usize * bounds.width() as usize + x as usize] =
+                        (value * 255.0) as u8;
+                });
                 let alpha_map: Rc<[u8]> = alpha_map.into();
 
                 let glyph = super::RenderableVectorGlyph {
-                    x: Fixed::from_integer(metrics.xmin.try_into().unwrap()),
-                    y: Fixed::from_integer(metrics.ymin.try_into().unwrap()),
-                    width: PhysicalLength::new(metrics.width.try_into().unwrap()),
-                    height: PhysicalLength::new(metrics.height.try_into().unwrap()),
+                    x: Fixed::from_f32(bounds.min.x)?,
+                    y: Fixed::from_f32(-bounds.max.y)?,
+                    width: PhysicalLength::new(bounds.width() as i16),
+                    height: PhysicalLength::new(bounds.height() as i16),
                     alpha_map,
-                    pixel_stride: metrics.width.try_into().unwrap(),
-                    bounds: metrics.bounds,
+                    pixel_stride: bounds.width() as u16,
                 };
 
                 cache.put_with_weight(cache_key, glyph.clone()).ok();
@@ -139,14 +156,19 @@ impl TextShaper for VectorFont {
         text: &str,
         glyphs: &mut GlyphStorage,
     ) {
+        let Ok(face) =
+            ab_glyph::FontRef::try_from_slice_and_index(self.font_blob.as_ref(), self.font_index)
+        else {
+            return;
+        };
         glyphs.extend(text.char_indices().map(|(byte_offset, char)| {
-            let glyph_id = NonZeroU16::try_from(self.fontdue_font.lookup_glyph_index(char)).ok();
+            let raw_glyph_id = face.glyph_id(char);
+            let glyph_id = NonZeroU16::try_from(raw_glyph_id.0).ok();
             let x_advance = glyph_id.map_or_else(
                 || self.pixel_size.get(),
-                |id| {
-                    self.fontdue_font
-                        .metrics_indexed(id.get(), self.pixel_size.get() as _)
-                        .advance_width as _
+                |_id| {
+                    (face.h_advance_unscaled(raw_glyph_id) / face.units_per_em().unwrap_or(1.0)
+                        * (self.pixel_size.get() as f32)) as _
                 },
             );
 
@@ -160,13 +182,16 @@ impl TextShaper for VectorFont {
     }
 
     fn glyph_for_char(&self, ch: char) -> Option<Glyph<PhysicalLength>> {
-        NonZeroU16::try_from(self.fontdue_font.lookup_glyph_index(ch)).ok().map(|glyph_id| {
+        let face =
+            ab_glyph::FontRef::try_from_slice_and_index(self.font_blob.as_ref(), self.font_index)
+                .ok()?;
+        let raw_glyph_id = face.glyph_id(ch);
+        NonZeroU16::try_from(raw_glyph_id.0).ok().map(|glyph_id| {
             let mut out_glyph = Glyph::default();
             out_glyph.glyph_id = Some(glyph_id);
             out_glyph.advance = PhysicalLength::new(
-                self.fontdue_font
-                    .metrics_indexed(glyph_id.get(), self.pixel_size.get() as _)
-                    .advance_width as _,
+                (face.h_advance_unscaled(raw_glyph_id) / face.units_per_em().unwrap_or(1.0)
+                    * (self.pixel_size.get() as f32)) as _,
             );
             out_glyph
         })

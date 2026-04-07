@@ -3142,13 +3142,9 @@ impl<T: ProcessScene> sharedparley::GlyphRenderer for SceneBuilder<'_, T> {
         y_offset: sharedparley::PhysicalLength,
         glyphs_it: &mut dyn Iterator<Item = sharedparley::parley::layout::Glyph>,
     ) {
-        let fontdue_font = fonts::systemfonts::get_or_create_fontdue_font_from_blob_and_index(
-            &font.data, font.index,
-        );
         let font = fonts::vectorfont::VectorFont::new_from_blob_and_index(
             font.data.clone(),
             font.index,
-            fontdue_font,
             font_size.cast(),
         );
 
@@ -3174,7 +3170,7 @@ impl<T: ProcessScene> sharedparley::GlyphRenderer for SceneBuilder<'_, T> {
                     + global_offset
                     + glyph_offset)
                     .cast()
-                    + euclid::vec2(glyph.bounds.xmin, 0.0),
+                    + euclid::vec2(glyph.x.into(), 0.0),
                 glyph.size().cast(),
             )
             .cast()

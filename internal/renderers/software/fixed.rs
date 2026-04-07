@@ -162,3 +162,9 @@ impl<T: core::ops::Div<Output = T>, const SHIFT: usize> core::ops::Div<T> for Fi
         Self(self.0 / rhs)
     }
 }
+
+impl<T: num_traits::ToPrimitive, const SHIFT: usize> Into<f32> for Fixed<T, SHIFT> {
+    fn into(self) -> f32 {
+        T::to_f32(&self.0).unwrap_or(0.0) / ((1 << SHIFT) as f32)
+    }
+}

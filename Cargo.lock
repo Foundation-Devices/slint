@@ -5050,11 +5050,11 @@ dependencies = [
 name = "i-slint-renderer-software"
 version = "1.15.1"
 dependencies = [
+ "ab_glyph",
  "bytemuck",
  "clru",
  "derive_more",
  "euclid",
- "fontdue",
  "i-slint-common",
  "i-slint-core",
  "integer-sqrt",
