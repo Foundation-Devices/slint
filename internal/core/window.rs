@@ -307,8 +307,33 @@ pub struct InputMethodProperties {
     pub input_type: InputType,
     /// The caps mode for the text edit
     pub caps_mode: CapsMode,
+    /// Custom label to display on the input method's accept (Done/Return)
+    /// button. When empty, the input method should use its default label.
+    pub accept_button_text: SharedString,
+    /// Whether the input method's accept (Done/Return) button is enabled.
+    /// When false, the button should be rendered in a disabled state and
+    /// presses should be ignored.
+    pub accept_button_enabled: bool,
+    /// Whether the input method's delete (Backspace) button is enabled.
+    /// When false, the button should be rendered in a disabled state and
+    /// presses should be ignored.
+    pub delete_button_enabled: bool,
     /// The clip rect in window coordinates
     pub clip_rect: Option<LogicalRect>,
+}
+
+/// Snapshot of the developer-set IME-relevant fields of
+/// `InputMethodProperties`. Used to detect when any of them have changed
+/// since the last `Update` was emitted, so the input method can be notified
+/// without depending on text edits to trigger re-emission.
+#[derive(Default, Clone, PartialEq)]
+pub(crate) struct LastImeProps {
+    pub text: SharedString,
+    pub input_type: InputType,
+    pub caps_mode: CapsMode,
+    pub accept_button_text: SharedString,
+    pub accept_button_enabled: bool,
+    pub delete_button_enabled: bool,
 }
 
 /// This struct describes layout constraints of a resizable element, such as a window.
@@ -519,8 +544,11 @@ pub struct WindowInner {
 
     /// ItemRC that currently have the focus (possibly an instance of TextInput)
     pub focus_item: RefCell<crate::item_tree::ItemWeak>,
-    /// The last text that was sent to the input method
-    pub(crate) last_ime_text: RefCell<SharedString>,
+    /// Snapshot of the developer-set IME-relevant properties last sent to
+    /// the input method. Used to detect when any of them have changed since
+    /// the last `Update` event was emitted, so the input method can be
+    /// notified again.
+    pub(crate) last_ime_props: RefCell<LastImeProps>,
     /// Don't let ComponentContainers's instantiation change the focus.
     /// This is a workaround for a recursion when instantiating ComponentContainer because the
     /// init code for the component might have code that sets the focus, but we don't want that
@@ -594,7 +622,7 @@ impl WindowInner {
                 ),
             }),
             focus_item: Default::default(),
-            last_ime_text: Default::default(),
+            last_ime_props: Default::default(),
             cursor_blinker: Default::default(),
             active_popups: Default::default(),
             next_popup_id: Cell::new(NonZeroU32::MIN),

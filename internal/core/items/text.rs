@@ -744,6 +744,9 @@ pub struct TextInput {
     pub wrap: Property<TextWrap>,
     pub input_type: Property<InputType>,
     pub caps_mode: Property<CapsMode>,
+    pub accept_button_text: Property<SharedString>,
+    pub accept_button_enabled: Property<bool>,
+    pub delete_button_enabled: Property<bool>,
     pub letter_spacing: Property<LogicalLength>,
     pub width: Property<LogicalLength>,
     pub height: Property<LogicalLength>,
@@ -1229,12 +1232,22 @@ impl Item for TextInput {
         size: LogicalSize,
     ) -> RenderingResult {
         crate::properties::evaluate_no_tracking(|| {
-            if self.has_focus() && self.text() != *backend.window().last_ime_text.borrow() {
-                let window_adapter = &backend.window().window_adapter();
-                if let Some(w) = window_adapter.internal(crate::InternalToken) {
-                    w.input_method_request(InputMethodRequest::Update(
-                        self.ime_properties(window_adapter, self_rc),
-                    ));
+            if self.has_focus() {
+                let snapshot = crate::window::LastImeProps {
+                    text: self.text(),
+                    input_type: self.input_type(),
+                    caps_mode: self.caps_mode(),
+                    accept_button_text: self.accept_button_text(),
+                    accept_button_enabled: self.accept_button_enabled(),
+                    delete_button_enabled: self.delete_button_enabled(),
+                };
+                if *backend.window().last_ime_props.borrow() != snapshot {
+                    let window_adapter = &backend.window().window_adapter();
+                    if let Some(w) = window_adapter.internal(crate::InternalToken) {
+                        w.input_method_request(InputMethodRequest::Update(
+                            self.ime_properties(window_adapter, self_rc),
+                        ));
+                    }
                 }
             }
         });
@@ -1732,7 +1745,15 @@ impl TextInput {
         self_rc: &ItemRc,
     ) -> InputMethodProperties {
         let text = self.text();
-        WindowInner::from_pub(window_adapter.window()).last_ime_text.replace(text.clone());
+        let props_for_snapshot = crate::window::LastImeProps {
+            text: text.clone(),
+            input_type: self.input_type(),
+            caps_mode: self.caps_mode(),
+            accept_button_text: self.accept_button_text(),
+            accept_button_enabled: self.accept_button_enabled(),
+            delete_button_enabled: self.delete_button_enabled(),
+        };
+        WindowInner::from_pub(window_adapter.window()).last_ime_props.replace(props_for_snapshot);
         let cursor_position = self.cursor_position(&text);
         let anchor_position = self.anchor_position(&text);
         let cursor_relative =
@@ -1766,6 +1787,9 @@ impl TextInput {
             anchor_point,
             input_type: self.input_type(),
             caps_mode: self.caps_mode(),
+            accept_button_text: self.accept_button_text(),
+            accept_button_enabled: self.accept_button_enabled(),
+            delete_button_enabled: self.delete_button_enabled(),
             clip_rect,
         }
     }
