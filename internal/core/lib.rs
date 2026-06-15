@@ -100,7 +100,7 @@ pub type Coord = i32;
 /// parameter cannot be called from the public API without naming it
 pub struct InternalToken;
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(any(not(target_family = "wasm"), target_os = "wasi"))]
 pub fn detect_operating_system() -> OperatingSystemType {
     if cfg!(target_os = "android") {
         OperatingSystemType::Android
@@ -117,7 +117,7 @@ pub fn detect_operating_system() -> OperatingSystemType {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
 pub fn detect_operating_system() -> OperatingSystemType {
     let mut user_agent =
         web_sys::window().and_then(|w| w.navigator().user_agent().ok()).unwrap_or_default();
