@@ -209,15 +209,41 @@ pub fn unregister_item_tree<Base>(
     item_array: &[vtable::VOffset<Base, ItemVTable, vtable::AllowPin>],
     window_adapter: &WindowAdapterRc,
 ) {
+    #![allow(unsafe_code)]
+    // Safety: the offsets are only applied, in unregister_item_tree_erased, to
+    // the base pointer passed along with them, which is the pinned Base they
+    // were derived from.
+    let item_array = unsafe { vtable::VOffset::erase_base_slice(item_array) };
+    unregister_item_tree_erased(
+        core::ptr::NonNull::from(base.get_ref()).cast(),
+        item_tree,
+        item_array,
+        window_adapter,
+    )
+}
+
+fn unregister_item_tree_erased(
+    base: core::ptr::NonNull<u8>,
+    item_tree: ItemTreeRef,
+    item_array: &[vtable::VOffset<u8, ItemVTable, vtable::AllowPin>],
+    window_adapter: &WindowAdapterRc,
+) {
+    #![allow(unsafe_code)]
+    // Safety: base is the first byte of the live component struct the offsets
+    // were derived from; the caller keeps it pinned and borrowed for the whole
+    // call, so each application yields a valid pinned item.
+    let apply = |item: &vtable::VOffset<u8, ItemVTable, vtable::AllowPin>| {
+        item.apply_pin(unsafe { core::pin::Pin::new_unchecked(&*base.as_ptr()) })
+    };
     item_array.iter().for_each(|item| {
-        item.apply_pin(base).as_ref().deinit(window_adapter);
+        apply(item).as_ref().deinit(window_adapter);
     });
-    window_adapter.renderer().free_graphics_resources(item_tree, &mut item_array.iter().map(|item| item.apply_pin(base))).expect(
+    window_adapter.renderer().free_graphics_resources(item_tree, &mut item_array.iter().map(apply)).expect(
         "Fatal error encountered when freeing graphics resources while destroying Slint component",
     );
 
     if let Some(w) = window_adapter.internal(crate::InternalToken) {
-        w.unregister_item_tree(item_tree, &mut item_array.iter().map(|item| item.apply_pin(base)));
+        w.unregister_item_tree(item_tree, &mut item_array.iter().map(apply));
     }
 
     // Close popups that were part of a component that just got deleted
@@ -1343,9 +1369,31 @@ pub fn visit_item_tree<Base>(
     item_tree_array: &[ItemTreeNode],
     index: isize,
     order: TraversalOrder,
-    mut visitor: vtable::VRefMut<ItemVisitorVTable>,
+    visitor: vtable::VRefMut<ItemVisitorVTable>,
     visit_dynamic: impl Fn(
         Pin<&Base>,
+        TraversalOrder,
+        vtable::VRefMut<ItemVisitorVTable>,
+        u32,
+    ) -> VisitChildrenResult,
+) -> VisitChildrenResult {
+    visit_item_tree_erased(
+        item_tree,
+        item_tree_array,
+        index,
+        order,
+        visitor,
+        &|order, visitor, dyn_index| visit_dynamic(base, order, visitor, dyn_index),
+    )
+}
+
+fn visit_item_tree_erased(
+    item_tree: &ItemTreeRc,
+    item_tree_array: &[ItemTreeNode],
+    index: isize,
+    order: TraversalOrder,
+    mut visitor: vtable::VRefMut<ItemVisitorVTable>,
+    visit_dynamic: &dyn Fn(
         TraversalOrder,
         vtable::VRefMut<ItemVisitorVTable>,
         u32,
@@ -1359,7 +1407,7 @@ pub fn visit_item_tree<Base>(
             }
             ItemTreeNode::DynamicTree { index, .. } => {
                 if let Some(sub_idx) =
-                    visit_dynamic(base, order, visitor.borrow_mut(), *index).aborted_index()
+                    visit_dynamic(order, visitor.borrow_mut(), *index).aborted_index()
                 {
                     VisitChildrenResult::abort(idx, sub_idx)
                 } else {

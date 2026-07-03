@@ -518,6 +518,21 @@ impl<Base, T: ?Sized + VTableMeta, Flag> VOffset<Base, T, Flag> {
     pub unsafe fn from_raw(vtable: &'static T::VTable, offset: usize) -> Self {
         Self { vtable, offset, phantom: PhantomData }
     }
+
+    /// Reinterpret a slice of offsets as offsets within a type-erased base.
+    ///
+    /// # Safety
+    ///
+    /// The returned offsets must only be applied to a `u8` reference that is
+    /// the first byte of a live `Base` that the original offsets apply to.
+    #[inline]
+    pub unsafe fn erase_base_slice(slice: &[Self]) -> &[VOffset<u8, T, Flag>] {
+        // Safety: VOffset is repr(C) and Base only appears in PhantomData, so
+        // VOffset<Base, ..> and VOffset<u8, ..> have the same layout.
+        unsafe {
+            core::slice::from_raw_parts(slice.as_ptr() as *const VOffset<u8, T, Flag>, slice.len())
+        }
+    }
 }
 
 impl<Base, T: ?Sized + VTableMeta> VOffset<Base, T, AllowPin> {
