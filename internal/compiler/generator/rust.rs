@@ -848,10 +848,18 @@ fn handle_property_init(
     let rust_property = access_member(prop, ctx).unwrap();
     let prop_type = ctx.property_ty(prop);
 
-    let init_self_pin_ref = if ctx.current_global().is_some() {
+    // For components the binding fn takes the pinned component directly and
+    // the helper erases its type; globals go through the typed Rc helpers.
+    let is_global = ctx.current_global().is_some();
+    let init_self_pin_ref = if is_global {
         quote!(let _self = self_rc.as_ref();)
     } else {
         quote!(let _self = self_rc.as_pin_ref();)
+    };
+    let (closure_param, closure_prelude) = if is_global {
+        (quote!(self_rc), Some(init_self_pin_ref.clone()))
+    } else {
+        (quote!(_self), None)
     };
 
     if let Type::Callback(callback) = &prop_type {
@@ -860,11 +868,16 @@ fn handle_property_init(
         let tokens_for_expression =
             compile_expression(&binding_expression.expression.borrow(), &ctx2);
         let as_ = if matches!(callback.return_type, Type::Void) { quote!(;) } else { quote!(as _) };
+        let set_callback_handler = if is_global {
+            quote!(slint::private_unstable_api::set_callback_handler)
+        } else {
+            quote!(slint::private_unstable_api::set_component_callback_handler)
+        };
         init.push(quote!({
             #[allow(unreachable_code, unused)]
-            slint::private_unstable_api::set_callback_handler(#rust_property, &self_rc, {
-                move |self_rc, args| {
-                    #init_self_pin_ref
+            #set_callback_handler(#rust_property, &self_rc, {
+                move |#closure_param, args| {
+                    #closure_prelude
                     (#tokens_for_expression) #as_
                 }
             });
@@ -879,32 +892,43 @@ fn handle_property_init(
             let t = rust_property_type(prop_type).unwrap_or(quote!(_));
             quote! { #rust_property.set({ (#tokens_for_expression) as #t }); }
         } else {
-            let maybe_cast_to_property_type = if binding_expression.expression.borrow().ty(ctx) == Type::Invalid {
-                // Don't cast if the Rust code is the never type, as with return statements inside a block, the
-                // type of the return expression is `()` instead of `!`.
-                None
-            } else {
-                Some(quote!(as _))
-            };
+            let maybe_cast_to_property_type =
+                if binding_expression.expression.borrow().ty(ctx) == Type::Invalid {
+                    // Don't cast if the Rust code is the never type, as with return statements inside a block, the
+                    // type of the return expression is `()` instead of `!`.
+                    None
+                } else {
+                    Some(quote!(as _))
+                };
 
-            let binding_tokens = quote!(move |self_rc| {
-                #init_self_pin_ref
+            let binding_tokens = quote!(move |#closure_param| {
+                #closure_prelude
                 (#tokens_for_expression) #maybe_cast_to_property_type
             });
 
             if binding_expression.is_state_info {
+                let set_state_binding = if is_global {
+                    quote!(slint::private_unstable_api::set_property_state_binding)
+                } else {
+                    quote!(slint::private_unstable_api::set_component_state_binding)
+                };
                 quote! { {
-                    slint::private_unstable_api::set_property_state_binding(#rust_property, &self_rc, #binding_tokens);
+                    #set_state_binding(#rust_property, &self_rc, #binding_tokens);
                 } }
             } else {
+                let set_animated_binding = if is_global {
+                    quote!(slint::private_unstable_api::set_animated_property_binding)
+                } else {
+                    quote!(slint::private_unstable_api::set_component_animated_binding)
+                };
                 match &binding_expression.animation {
                     Some(llr::Animation::Static(anim)) => {
                         let anim = compile_expression(anim, ctx);
                         quote! { {
                             #init_self_pin_ref
-                            slint::private_unstable_api::set_animated_property_binding(
-                                #rust_property, &self_rc, #binding_tokens, move |self_rc| {
-                                    #init_self_pin_ref
+                            #set_animated_binding(
+                                #rust_property, &self_rc, #binding_tokens, move |#closure_param| {
+                                    #closure_prelude
                                     (#anim, None)
                                 });
                         } }
@@ -912,9 +936,9 @@ fn handle_property_init(
                     Some(llr::Animation::Transition(animation)) => {
                         let animation = compile_expression(animation, ctx);
                         quote! {
-                            slint::private_unstable_api::set_animated_property_binding(
-                                #rust_property, &self_rc, #binding_tokens, move |self_rc| {
-                                    #init_self_pin_ref
+                            #set_animated_binding(
+                                #rust_property, &self_rc, #binding_tokens, move |#closure_param| {
+                                    #closure_prelude
                                     let (animation, change_time) = #animation;
                                     (animation, Some(change_time))
                                 }
@@ -922,8 +946,13 @@ fn handle_property_init(
                         }
                     }
                     None => {
+                        let set_binding = if is_global {
+                            quote!(slint::private_unstable_api::set_property_binding)
+                        } else {
+                            quote!(slint::private_unstable_api::set_component_binding)
+                        };
                         quote! { {
-                            slint::private_unstable_api::set_property_binding(#rust_property, &self_rc, #binding_tokens);
+                            #set_binding(#rust_property, &self_rc, #binding_tokens);
                         } }
                     }
                 }

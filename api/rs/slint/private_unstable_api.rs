@@ -112,6 +112,129 @@ pub fn set_callback_handler<
     })
 }
 
+// The `set_component_*` variants of the helpers above erase the component
+// type, so the binding machinery below them instantiates once per property
+// type instead of once per (property type, component) pair.
+//
+// Safety of the fn pointer transmutes: Pin<&C> and Pin<&()> are ABI-compatible
+// thin references, and the erased fn is only ever called on the pinned C that
+// the weak passed along with it was erased from.
+
+fn erase_weak<C: 'static>(
+    strong: &VRcMapped<ItemTreeVTable, C>,
+) -> VWeakMapped<ItemTreeVTable, ()> {
+    VRcMapped::downgrade(&VRcMapped::erase_map(strong.clone()))
+}
+
+pub fn set_component_binding<T: Clone + Default + 'static, C: 'static>(
+    property: Pin<&Property<T>>,
+    component_strong: &VRcMapped<ItemTreeVTable, C>,
+    binding: fn(Pin<&C>) -> T,
+) {
+    #![allow(unsafe_code)]
+    // Safety: see above.
+    let binding = unsafe { core::mem::transmute::<fn(Pin<&C>) -> T, fn(Pin<&()>) -> T>(binding) };
+    set_binding_erased(property, erase_weak(component_strong), binding);
+}
+
+fn set_binding_erased<T: Clone + Default + 'static>(
+    property: Pin<&Property<T>>,
+    weak: VWeakMapped<ItemTreeVTable, ()>,
+    binding: fn(Pin<&()>) -> T,
+) {
+    property.set_binding(move || {
+        weak.upgrade().map(|strong| binding(strong.as_pin_ref())).unwrap_or_default()
+    })
+}
+
+pub fn set_component_animated_binding<
+    T: Clone + i_slint_core::properties::InterpolatedPropertyValue + 'static,
+    C: 'static,
+>(
+    property: Pin<&Property<T>>,
+    component_strong: &VRcMapped<ItemTreeVTable, C>,
+    binding: fn(Pin<&C>) -> T,
+    compute_animation_details: fn(
+        Pin<&C>,
+    )
+        -> (PropertyAnimation, Option<i_slint_core::animations::Instant>),
+) {
+    #![allow(unsafe_code)]
+    // Safety: see above.
+    let binding = unsafe { core::mem::transmute::<fn(Pin<&C>) -> T, fn(Pin<&()>) -> T>(binding) };
+    let compute_animation_details = unsafe {
+        core::mem::transmute::<
+            fn(Pin<&C>) -> (PropertyAnimation, Option<i_slint_core::animations::Instant>),
+            fn(Pin<&()>) -> (PropertyAnimation, Option<i_slint_core::animations::Instant>),
+        >(compute_animation_details)
+    };
+    set_animated_binding_erased(
+        property,
+        erase_weak(component_strong),
+        binding,
+        compute_animation_details,
+    );
+}
+
+fn set_animated_binding_erased<
+    T: Clone + i_slint_core::properties::InterpolatedPropertyValue + 'static,
+>(
+    property: Pin<&Property<T>>,
+    weak: VWeakMapped<ItemTreeVTable, ()>,
+    binding: fn(Pin<&()>) -> T,
+    compute_animation_details: fn(
+        Pin<&()>,
+    )
+        -> (PropertyAnimation, Option<i_slint_core::animations::Instant>),
+) {
+    let weak_2 = weak.clone();
+    property.set_animated_binding(
+        move || binding(weak.upgrade().unwrap().as_pin_ref()),
+        move || compute_animation_details(weak_2.upgrade().unwrap().as_pin_ref()),
+    )
+}
+
+pub fn set_component_state_binding<C: 'static>(
+    property: Pin<&Property<StateInfo>>,
+    component_strong: &VRcMapped<ItemTreeVTable, C>,
+    binding: fn(Pin<&C>) -> i32,
+) {
+    #![allow(unsafe_code)]
+    // Safety: see above.
+    let binding =
+        unsafe { core::mem::transmute::<fn(Pin<&C>) -> i32, fn(Pin<&()>) -> i32>(binding) };
+    set_state_binding_erased(property, erase_weak(component_strong), binding)
+}
+
+fn set_state_binding_erased(
+    property: Pin<&Property<StateInfo>>,
+    weak: VWeakMapped<ItemTreeVTable, ()>,
+    binding: fn(Pin<&()>) -> i32,
+) {
+    re_exports::set_state_binding(property, move || binding(weak.upgrade().unwrap().as_pin_ref()))
+}
+
+pub fn set_component_callback_handler<Arg: ?Sized + 'static, Ret: Default + 'static, C: 'static>(
+    callback: Pin<&Callback<Arg, Ret>>,
+    component_strong: &VRcMapped<ItemTreeVTable, C>,
+    handler: fn(Pin<&C>, &Arg) -> Ret,
+) {
+    #![allow(unsafe_code)]
+    // Safety: see above.
+    let handler = unsafe {
+        core::mem::transmute::<fn(Pin<&C>, &Arg) -> Ret, fn(Pin<&()>, &Arg) -> Ret>(handler)
+    };
+    set_callback_handler_erased(callback, erase_weak(component_strong), handler)
+}
+
+fn set_callback_handler_erased<Arg: ?Sized + 'static, Ret: Default + 'static>(
+    callback: Pin<&Callback<Arg, Ret>>,
+    weak: VWeakMapped<ItemTreeVTable, ()>,
+    handler: fn(Pin<&()>, &Arg) -> Ret,
+) {
+    callback.set_handler(move |arg| handler(weak.upgrade().unwrap().as_pin_ref(), arg))
+}
+
 pub fn debug(s: SharedString) {
     i_slint_core::debug_log::log_message(i_slint_core::debug_log::LogMessage::new(
         i_slint_core::debug_log::LogMessageSource::SlintCode,

@@ -425,6 +425,12 @@ impl<VTable: VTableMetaDropInPlace + 'static, MappedType: ?Sized> VRcMapped<VTab
     pub fn origin(this: &Self) -> VRc<VTable> {
         this.parent_strong.clone()
     }
+
+    /// Erase the mapped type. The pointee stays alive through the parent
+    /// strong reference, and `as_pin_ref` yields a `Pin<&()>` at its address.
+    pub fn erase_map(this: Self) -> VRcMapped<VTable, ()> {
+        VRcMapped { parent_strong: this.parent_strong, object: this.object as *const () }
+    }
 }
 
 impl<VTable: VTableMetaDropInPlace + 'static, MappedType: ?Sized> Deref
