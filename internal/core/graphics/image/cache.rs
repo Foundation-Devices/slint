@@ -85,7 +85,8 @@ impl ImageCache {
         });
         #[cfg(not(target_arch = "wasm32"))]
         return self.lookup_image_in_cache_or_create(cache_key, |cache_key| {
-            if cfg!(feature = "svg") && (path.ends_with(".svg") || path.ends_with(".svgz")) {
+            #[cfg(feature = "svg")]
+            if path.ends_with(".svg") || path.ends_with(".svgz") {
                 return Some(ImageInner::Svg(vtable::VRc::new(
                     super::svg::load_from_path(path, cache_key).map_or_else(
                         |err| {

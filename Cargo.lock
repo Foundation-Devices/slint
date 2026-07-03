@@ -5451,6 +5451,7 @@ dependencies = [
  "gettext-rs",
  "i-slint-backend-testing",
  "i-slint-common",
+ "i-slint-core",
  "i-slint-core-macros",
  "icu_normalizer",
  "image",
