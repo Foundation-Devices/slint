@@ -248,7 +248,7 @@ impl Pixel for image::Rgba<u8> {
 }
 
 #[cfg(feature = "software-renderer")]
-fn generate_texture(
+pub fn generate_texture(
     image: image::RgbaImage,
     source_format: SourceFormat,
     original_size: Size,
@@ -393,7 +393,7 @@ fn convert_image(
 }
 
 #[cfg(feature = "software-renderer")]
-enum SourceFormat {
+pub enum SourceFormat {
     RgbaPremultiplied,
     Rgba,
 }
@@ -497,7 +497,7 @@ fn load_image_from_bytes(
 }
 
 #[cfg(feature = "software-renderer")]
-fn load_image(
+pub fn load_image(
     file: crate::fileaccess::VirtualFile,
     scale_factor: f32,
     font_collection: Option<&SharedFontCollection>,

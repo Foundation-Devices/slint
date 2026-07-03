@@ -22,7 +22,7 @@ mod default_geometry;
 mod deprecated_rotation_origin;
 #[cfg(feature = "software-renderer")]
 mod embed_glyphs;
-mod embed_images;
+pub mod embed_images;
 mod flickable;
 mod focus_handling;
 pub mod generate_item_indices;
