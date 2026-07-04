@@ -366,6 +366,10 @@ fn create_text_paragraphs(
     paragraphs
 }
 
+/// Note: parley currently uses `WordBreak` while shaping via `analyze_text()`, so shaped
+/// paragraphs aren't identical across wrap modes. This is why `text_size()` caches its result
+/// keyed by wrap mode rather than reusing the shaped-paragraph cache, which would incorrectly
+/// share paragraphs shaped with one wrap mode across another.
 fn layout(
     layout_builder: &LayoutWithoutLineBreaksBuilder,
     font_context: &mut parley::FontContext,

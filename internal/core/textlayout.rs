@@ -86,8 +86,11 @@ pub fn text_size(
     text_wrap: TextWrap,
     cache: Option<&engine::TextLayoutCache>,
 ) -> Option<crate::lengths::LogicalSize> {
-    let _ = cache;
-    engine::measure_text_size(renderer, text_item, item_rc, max_width, text_wrap)
+    let measure = || engine::measure_text_size(renderer, text_item, item_rc, max_width, text_wrap);
+    match cache {
+        Some(cache) => cache.cached_text_size(item_rc, max_width, text_wrap, measure),
+        None => measure(),
+    }
 }
 
 /// The byte offset into the text input's actual text for a click at `pos`,
