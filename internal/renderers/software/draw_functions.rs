@@ -926,6 +926,23 @@ pub trait TargetPixel: Sized + Copy {
     }
 }
 
+/// A single-channel alpha pixel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(transparent)]
+pub struct AlphaOnly(pub u8);
+
+impl TargetPixel for AlphaOnly {
+    fn blend(&mut self, color: PremultipliedRgbaColor) {
+        let src = color.alpha as u16;
+        let dst = self.0 as u16;
+        self.0 = (src + dst * (255 - src) / 255) as u8;
+    }
+
+    fn from_rgb(_r: u8, _g: u8, _b: u8) -> Self {
+        Self(0)
+    }
+}
+
 impl TargetPixel for Rgb8Pixel {
     fn blend(&mut self, color: PremultipliedRgbaColor) {
         let a = (u8::MAX - color.alpha) as u16;

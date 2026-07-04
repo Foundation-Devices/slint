@@ -54,7 +54,7 @@ use i_slint_core::{Brush, Color, ImageInner, StaticTextures};
 use num_traits::Float;
 use num_traits::NumCast;
 
-pub use draw_functions::{PremultipliedRgbaColor, Rgb565Pixel, TargetPixel};
+pub use draw_functions::{AlphaOnly, PremultipliedRgbaColor, Rgb565Pixel, TargetPixel};
 
 type PhysicalLength = euclid::Length<i16, PhysicalPx>;
 type PhysicalRect = euclid::Rect<i16, PhysicalPx>;
@@ -2645,10 +2645,10 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
                             fonts::GlyphAlphaMap::Shared(data) => {
                                 let source_rect = euclid::rect(0, 0, glyph.width.0, glyph.height.0);
                                 target_pixel_buffer::TextureDataContainer::Shared {
-                                    buffer: SharedBufferData::AlphaMap {
+                                    buffer: SharedBufferData::AlphaMap(AlphaMapBuffer {
                                         data: data.clone(),
                                         width: glyph.pixel_stride,
-                                    },
+                                    }),
                                     source_rect,
                                 }
                             }
@@ -2691,6 +2691,119 @@ impl<'a, T: ProcessScene> SceneBuilder<'a, T> {
         } else {
             color
         }
+    }
+
+    #[cfg(feature = "systemfonts")]
+    fn draw_text_bitmap(
+        &mut self,
+        text: &Pin<&dyn i_slint_core::item_rendering::RenderText>,
+        geom: LogicalRect,
+        bitmap: AlphaMapBuffer,
+    ) {
+        let phys = geom.translate(self.current_state.offset.to_vector()).cast() * self.scale_factor;
+        let full_geom = PhysicalRect::new(phys.origin.cast(), phys.size.round().cast())
+            .transformed(self.rotation);
+
+        let Some(logical_clip) = self.current_state.clip.intersection(&geom) else {
+            return;
+        };
+        let clip_phys = (logical_clip.translate(self.current_state.offset.to_vector()).cast()
+            * self.scale_factor)
+            .round()
+            .cast()
+            .transformed(self.rotation);
+
+        let Some(clipped_geom) = full_geom.intersection(&clip_phys) else {
+            return;
+        };
+
+        // Sub-rect of the cached bitmap that survives clipping.
+        let dx = (clipped_geom.min_x() - full_geom.min_x()) as i16;
+        let dy = (clipped_geom.min_y() - full_geom.min_y()) as i16;
+        let source_rect = euclid::rect(dx, dy, clipped_geom.width(), clipped_geom.height());
+
+        let full_color = self.alpha_color(text.color().color());
+
+        let args = target_pixel_buffer::DrawTextureArgs {
+            data: target_pixel_buffer::TextureDataContainer::Shared {
+                buffer: SharedBufferData::AlphaMap(bitmap),
+                source_rect,
+            },
+            colorize: Some(full_color),
+            alpha: full_color.alpha(),
+            dst_x: clipped_geom.min_x() as _,
+            dst_y: clipped_geom.min_y() as _,
+            dst_width: clipped_geom.width() as _,
+            dst_height: clipped_geom.height() as _,
+            rotation: self.rotation.orientation,
+            tiling: None,
+        };
+
+        self.processor.process_target_texture(&args, clipped_geom);
+    }
+
+    #[cfg(feature = "systemfonts")]
+    fn draw_text_bitmap_to_cache(
+        &mut self,
+        text: &Pin<&dyn i_slint_core::item_rendering::RenderText>,
+        self_rc: &ItemRc,
+        geom: LogicalRect,
+        size: LogicalSize,
+        cache_key: paragraph_cache::ParagraphCacheKey,
+    ) {
+        // ceil so a fractional edge doesn't clip the coverage a pixel short.
+        let max_size: euclid::Size2D<f32, PhysicalPx> =
+            (geom.size.cast() * self.scale_factor).ceil();
+
+        let alpha_map = self.render_text_to_alpha_map(text, self_rc, size, max_size);
+        let bitmap = AlphaMapBuffer {
+            width: alpha_map.width() as u16,
+            data: Rc::from(bytemuck::cast_slice::<AlphaOnly, u8>(alpha_map.as_slice())),
+        };
+
+        paragraph_cache::add_to_cache(cache_key, bitmap.clone());
+        self.draw_text_bitmap(text, geom, bitmap);
+    }
+
+    #[cfg(feature = "systemfonts")]
+    fn render_text_to_alpha_map(
+        &self,
+        text: &Pin<&dyn i_slint_core::item_rendering::RenderText>,
+        self_rc: &ItemRc,
+        size: LogicalSize,
+        max_size: euclid::Size2D<f32, PhysicalPx>,
+    ) -> SharedPixelBuffer<AlphaOnly> {
+        let (w, h) = (max_size.width as u32, max_size.height as u32);
+        let physical_size = PhysicalSize::new(w as i16, h as i16);
+
+        let mut alpha_map = SharedPixelBuffer::<AlphaOnly>::new(w, h);
+        let mut buffer =
+            TargetPixelSlice { data: alpha_map.make_mut_slice(), pixel_stride: w as usize };
+
+        let mut dirty_region = PhysicalRegion::default();
+        dirty_region.rectangles[0] = PhysicalRect::from_size(physical_size).to_box2d();
+        dirty_region.count = 1;
+
+        let mut off_renderer = SceneBuilder::new(
+            physical_size,
+            self.scale_factor,
+            self.window,
+            RenderToBuffer {
+                buffer: &mut buffer,
+                dirty_range_cache: Vec::new(),
+                dirty_region,
+                scale_factor: self.scale_factor,
+                current_rounded_clip: Default::default(),
+            },
+            RenderingRotation::NoRotation,
+            self.text_layout_cache,
+        );
+
+        // Render pure coverage; the fill color is applied when the cached bitmap is blitted, so
+        // one bitmap serves any color and opacity of this string.
+        sharedparley::draw_text(&mut off_renderer, *text, Some(self_rc), size, None);
+
+        alpha_map
     }
 }
 
@@ -2882,7 +2995,28 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRenderer for SceneBuilde
         #[cfg(feature = "systemfonts")]
         if matches!(font, fonts::Font::VectorFont(_)) && !parley_disabled() {
             drop(font_ctx);
-            sharedparley::draw_text(self, text, Some(self_rc), size, Some(self.text_layout_cache));
+
+            // Cache each rendered paragraph as one alpha bitmap: re-blitting a single wide texture
+            // beats emitting a colorize texture per glyph on every redraw.
+            let geom = LogicalRect::from(size);
+            match paragraph_cache::ParagraphCacheKey::new(
+                &text,
+                &font_request,
+                size,
+                self.scale_factor,
+            ) {
+                Some(cache_key) => match paragraph_cache::get_from_cache(&cache_key) {
+                    Some(cached) => self.draw_text_bitmap(&text, geom, cached),
+                    None => self.draw_text_bitmap_to_cache(&text, self_rc, geom, size, cache_key),
+                },
+                None => sharedparley::draw_text(
+                    self,
+                    text,
+                    Some(self_rc),
+                    size,
+                    Some(self.text_layout_cache),
+                ),
+            }
             return;
         }
 
@@ -3423,6 +3557,135 @@ impl<T: ProcessScene> i_slint_core::item_rendering::ItemRendererFeatures for Sce
     const SUPPORTS_TRANSFORMATIONS: bool = false;
 }
 
+/// Content-addressed cache of rendered text paragraphs, keyed by string and font attributes
+/// rather than by item, so a ListView row survives being recycled or scrolled out and back.
+#[cfg(feature = "systemfonts")]
+mod paragraph_cache {
+    use core::pin::Pin;
+    use std::hash::RandomState;
+    use std::num::NonZeroUsize;
+
+    use clru::{CLruCache, CLruCacheConfig, WeightScale};
+
+    use i_slint_core::graphics::FontRequest;
+    use i_slint_core::item_rendering::{PlainOrStyledText, RenderText};
+    use i_slint_core::items::{
+        TextHorizontalAlignment, TextOverflow, TextVerticalAlignment, TextWrap,
+    };
+    use i_slint_core::lengths::{LogicalPx, LogicalSize, PhysicalPx, ScaleFactor};
+    use i_slint_core::{Brush, SharedString};
+
+    use crate::scene::AlphaMapBuffer;
+
+    // 1 MiB, overridable at build time.
+    const DEFAULT_CACHE_SIZE: usize = 1024 * 1024;
+
+    pub fn add_to_cache(key: ParagraphCacheKey, data: AlphaMapBuffer) {
+        with_cache(|cache| cache.put_with_weight(key, data).ok());
+    }
+
+    pub fn get_from_cache(key: &ParagraphCacheKey) -> Option<AlphaMapBuffer> {
+        with_cache(|cache| cache.get(key).cloned())
+    }
+
+    #[derive(Debug, Clone, Eq, PartialEq, Hash)]
+    pub struct ParagraphCacheKey {
+        text: SharedString,
+        family: Option<SharedString>,
+        max_size: euclid::Size2D<u32, PhysicalPx>,
+        weight: Option<i32>,
+        pixel_size: Option<euclid::Length<u32, LogicalPx>>,
+        letter_spacing: Option<euclid::Length<i32, LogicalPx>>,
+        italic: bool,
+        horizontal_alignment: TextHorizontalAlignment,
+        vertical_alignment: TextVerticalAlignment,
+        wrap: TextWrap,
+        overflow: TextOverflow,
+    }
+
+    impl ParagraphCacheKey {
+        /// Returns None for text that can't be cached as a tintable coverage bitmap: a non-opaque
+        /// or non-solid fill, since the bitmap holds coverage only, or a paragraph too large to
+        /// ever fit the cache.
+        pub fn new(
+            text: &Pin<&dyn RenderText>,
+            font_request: &FontRequest,
+            size: LogicalSize,
+            scale_factor: ScaleFactor,
+        ) -> Option<Self> {
+            // Styled runs can carry their own colors and weights, which a single coverage bitmap
+            // can't represent, so only plain text is cacheable.
+            let string = match text.text() {
+                PlainOrStyledText::Plain(string) => string,
+                PlainOrStyledText::Styled(_) => return None,
+            };
+            match text.color() {
+                Brush::SolidColor(color) if color.alpha() == 255 => {}
+                _ => return None,
+            }
+
+            let max_size = (size * scale_factor).cast::<u32>();
+            if bitmap_bytes(&max_size) > max_item_size() {
+                return None;
+            }
+
+            let (horizontal_alignment, vertical_alignment) = text.alignment();
+            Some(Self {
+                text: string,
+                family: font_request.family.clone(),
+                max_size,
+                weight: font_request.weight,
+                pixel_size: font_request.pixel_size.map(|p| p.cast()),
+                letter_spacing: font_request.letter_spacing.map(|s| s.cast()),
+                italic: font_request.italic,
+                horizontal_alignment,
+                vertical_alignment,
+                wrap: text.wrap(),
+                overflow: text.overflow(),
+            })
+        }
+    }
+
+    fn bitmap_bytes(size: &euclid::Size2D<u32, PhysicalPx>) -> usize {
+        size.width as usize * size.height as usize
+    }
+
+    struct ParagraphWeightScale;
+    impl WeightScale<ParagraphCacheKey, AlphaMapBuffer> for ParagraphWeightScale {
+        fn weight(&self, _key: &ParagraphCacheKey, value: &AlphaMapBuffer) -> usize {
+            value.data.len()
+        }
+    }
+
+    type ParagraphCache =
+        CLruCache<ParagraphCacheKey, AlphaMapBuffer, RandomState, ParagraphWeightScale>;
+
+    fn max_item_size() -> usize {
+        with_cache(|cache| cache.capacity())
+    }
+
+    fn with_cache<T>(f: impl FnOnce(&mut ParagraphCache) -> T) -> T {
+        PARAGRAPH_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let cache = cache.get_or_insert_with(|| {
+                let size = option_env!("MAX_TEXT_BITMAP_CACHE_SIZE")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(DEFAULT_CACHE_SIZE);
+                CLruCache::with_config(
+                    CLruCacheConfig::new(NonZeroUsize::new(size).unwrap())
+                        .with_scale(ParagraphWeightScale),
+                )
+            });
+            f(cache)
+        })
+    }
+
+    i_slint_core::thread_local! {
+        static PARAGRAPH_CACHE: core::cell::RefCell<Option<ParagraphCache>> =
+            core::cell::RefCell::new(None);
+    }
+}
+
 #[cfg(feature = "systemfonts")]
 use i_slint_core::textlayout::sharedparley::{self, fontique};
 
@@ -3522,10 +3785,10 @@ impl<T: ProcessScene> sharedparley::GlyphRenderer for SceneBuilder<'_, T> {
             let data = {
                 let source_rect = euclid::rect(0, 0, glyph.width.0, glyph.height.0);
                 target_pixel_buffer::TextureDataContainer::Shared {
-                    buffer: SharedBufferData::AlphaMap {
+                    buffer: SharedBufferData::AlphaMap(AlphaMapBuffer {
                         data: glyph.alpha_map,
                         width: glyph.pixel_stride,
-                    },
+                    }),
                     source_rect,
                 }
             };
