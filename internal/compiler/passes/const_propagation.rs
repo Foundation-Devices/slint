@@ -85,11 +85,30 @@ fn simplify_expression(
                 {
                     Some(Expression::NumberLiteral(*a - *b, *un1))
                 }
+                ('+', e, Expression::NumberLiteral(n, _))
+                | ('+', Expression::NumberLiteral(n, _), e)
+                | ('-', e, Expression::NumberLiteral(n, _))
+                    if *n == 0. =>
+                {
+                    Some(std::mem::take(e))
+                }
                 ('*', Expression::NumberLiteral(a, un1), Expression::NumberLiteral(b, un2))
                     if *un1 == Unit::None || *un2 == Unit::None =>
                 {
                     let preserved_unit = if *un1 == Unit::None { *un2 } else { *un1 };
                     Some(Expression::NumberLiteral(*a * *b, preserved_unit))
+                }
+                ('*', e, Expression::NumberLiteral(n, Unit::None))
+                | ('*', Expression::NumberLiteral(n, Unit::None), e)
+                    if *n == 1. =>
+                {
+                    Some(std::mem::take(e))
+                }
+                ('*', _, Expression::NumberLiteral(n, u))
+                | ('*', Expression::NumberLiteral(n, u), _)
+                    if *n == 0. =>
+                {
+                    Some(Expression::NumberLiteral(0., *u))
                 }
                 (
                     '/',
@@ -127,16 +146,16 @@ fn simplify_expression(
                 }
                 ('|', Expression::BoolLiteral(false), e) => Some(std::mem::take(e)),
                 ('|', e, Expression::BoolLiteral(false)) => Some(std::mem::take(e)),
-                ('>', Expression::NumberLiteral(a, un1), Expression::NumberLiteral(b, un2))
-                    if un1 == un2 =>
-                {
-                    Some(Expression::BoolLiteral(*a > *b))
-                }
-                ('<', Expression::NumberLiteral(a, un1), Expression::NumberLiteral(b, un2))
-                    if un1 == un2 =>
-                {
-                    Some(Expression::BoolLiteral(*a < *b))
-                }
+                (
+                    '<' | '>' | '≤' | '≥',
+                    Expression::NumberLiteral(a, un1),
+                    Expression::NumberLiteral(b, un2),
+                ) if un1 == un2 => Some(Expression::BoolLiteral(match op {
+                    '<' => a < b,
+                    '>' => a > b,
+                    '≤' => a <= b,
+                    _ => a >= b,
+                })),
                 _ => None,
             };
             if let Some(new) = new {
@@ -197,14 +216,29 @@ fn simplify_expression(
         Expression::MinMax { op, lhs, rhs, ty: _ } => {
             let can_inline =
                 simplify_expression(lhs, ga, cache) & simplify_expression(rhs, ga, cache);
-            if let (Expression::NumberLiteral(lhs, u), Expression::NumberLiteral(rhs, _)) =
-                (&**lhs, &**rhs)
-            {
-                let v = match op {
-                    MinMaxOp::Min => lhs.min(*rhs),
-                    MinMaxOp::Max => lhs.max(*rhs),
-                };
-                *expr = Expression::NumberLiteral(v, *u);
+            match (&mut **lhs, &mut **rhs) {
+                (Expression::NumberLiteral(a, u), Expression::NumberLiteral(b, _)) => {
+                    let v = match op {
+                        MinMaxOp::Min => a.min(*b),
+                        MinMaxOp::Max => a.max(*b),
+                    };
+                    let u = *u;
+                    *expr = Expression::NumberLiteral(v, u);
+                }
+                // Runtime values are f32, so a bound at or above f32::MAX never
+                // wins a min, and always wins a max.
+                (Expression::NumberLiteral(n, _), e) | (e, Expression::NumberLiteral(n, _))
+                    if matches!(op, MinMaxOp::Min) && *n >= f32::MAX as f64 =>
+                {
+                    let e = std::mem::take(e);
+                    *expr = e;
+                }
+                (Expression::NumberLiteral(n, u), _) | (_, Expression::NumberLiteral(n, u))
+                    if matches!(op, MinMaxOp::Max) && *n >= f32::MAX as f64 =>
+                {
+                    *expr = Expression::NumberLiteral(*n, *u);
+                }
+                _ => {}
             }
             can_inline
         }
