@@ -56,7 +56,7 @@ box-shadow-cache = []
 
 testing = []
 
-shared-fontique = ["i-slint-common/shared-fontique"]
+shared-fontique = ["i-slint-common/shared-fontique", "dep:skrifa"]
 
 raw-window-handle-06 = ["dep:raw-window-handle-06"]
 

@@ -747,7 +747,7 @@ pub mod fontique_010 {
     pub fn shared_collection() -> fontique::Collection {
         i_slint_core::with_global_context(
             || panic!("slint platform not initialized"),
-            |ctx| ctx.font_context().borrow().collection.clone(),
+            |ctx| ctx.font_context().borrow().inner.collection.clone(),
         )
         .unwrap()
     }

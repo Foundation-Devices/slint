@@ -411,7 +411,7 @@ impl<B: GraphicsBackend> RendererSealed for FemtoVGRenderer<B> {
         let requested_path = path.canonicalize().unwrap_or_else(|_| path.into());
         let contents = std::fs::read(requested_path)?;
         let ctx = self.slint_context().ok_or("slint platform not initialized")?;
-        ctx.font_context().borrow_mut().collection.register_fonts(contents.into(), None);
+        ctx.font_context().borrow_mut().inner.collection.register_fonts(contents.into(), None);
         Ok(())
     }
 

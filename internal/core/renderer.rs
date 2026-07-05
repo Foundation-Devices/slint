@@ -139,7 +139,7 @@ pub trait RendererSealed {
             .map(|window_adapter| ScaleFactor::new(window_adapter.window().scale_factor()))
     }
 
-    #[cfg(feature = "shared-parley")]
+    #[cfg(feature = "shared-fontique")]
     fn slint_context(&self) -> Option<crate::SlintContext> {
         self.window_adapter()
             .map(|wa| crate::window::WindowInner::from_pub(wa.window()).context().clone())

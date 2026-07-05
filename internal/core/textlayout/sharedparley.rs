@@ -25,135 +25,18 @@ use euclid::num::Zero;
 use i_slint_common::sharedfontique;
 use skrifa::MetadataProvider as _;
 use std::cell::RefCell;
-use std::collections::HashSet;
-use std::sync::Arc;
-
-#[derive(derive_more::Deref, derive_more::DerefMut)]
-pub struct FontContext {
-    #[deref]
-    #[deref_mut]
-    pub inner: parley::FontContext,
-    /// `(ptr, len)` of each `&'static [u8]` already handed to fontique, so repeat
-    /// `register_static_font` calls for the same embedded font are skipped.
-    registered_static_fonts: HashSet<(usize, usize)>,
-}
-
-impl FontContext {
-    pub fn new(inner: parley::FontContext) -> Self {
-        Self { inner, registered_static_fonts: HashSet::default() }
-    }
-
-    pub fn register_static_font(&mut self, data: &'static [u8]) {
-        let key = (data.as_ptr() as usize, data.len());
-        if self.registered_static_fonts.insert(key) {
-            self.inner.collection.register_fonts(fontique::Blob::new(Arc::new(data)), None);
-        }
-    }
-
-    pub fn clear_registered_static_fonts(&mut self) {
-        self.registered_static_fonts.clear();
-    }
-
-    pub fn set_default_font_family(&mut self, family_name: &str) -> bool {
-        sharedfontique::set_default_font_family(&mut self.inner.collection, family_name)
-    }
-}
-
-type InnerTextLayoutCache = crate::item_rendering::ItemCache<Vec<TextParagraph>>;
 
 /// Cache for shaped text paragraphs (before line breaking), keyed by ItemRc.
-pub struct TextLayoutCache {
-    inner: InnerTextLayoutCache,
-    #[cfg(feature = "testing")]
-    cache_miss_count: std::cell::Cell<u64>,
-}
+pub type TextLayoutCache = super::layoutcache::TextLayoutCache<Vec<TextParagraph>>;
 
-#[allow(clippy::derivable_impls)] // clippy doesn't see the feature = "testing" code
-impl Default for TextLayoutCache {
-    fn default() -> Self {
-        Self {
-            inner: Default::default(),
-            #[cfg(feature = "testing")]
-            cache_miss_count: std::cell::Cell::new(0),
-        }
-    }
-}
-
-impl TextLayoutCache {
-    pub fn clear_cache_if_scale_factor_changed(&self, window: &crate::api::Window) {
-        self.inner.clear_cache_if_scale_factor_changed(window);
-    }
-    pub fn component_destroyed(&self, component: crate::item_tree::ItemTreeRef) {
-        self.inner.component_destroyed(component);
-    }
-    pub fn clear_all(&self) {
-        self.inner.clear_all();
-    }
-}
-
-#[cfg(feature = "testing")]
-impl TextLayoutCache {
-    pub fn cache_miss_count(&self) -> u64 {
-        self.cache_miss_count.get()
-    }
-    pub fn reset_cache_miss_count(&self) {
-        self.cache_miss_count.set(0);
-    }
-}
-
-pub type PhysicalLength = euclid::Length<f32, PhysicalPx>;
-pub type PhysicalRect = euclid::Rect<f32, PhysicalPx>;
+use super::glyphrenderer::{GlyphRenderer, PhysicalLength, PhysicalRect, RenderGlyph};
 type PhysicalSize = euclid::Size2D<f32, PhysicalPx>;
 type PhysicalPoint = euclid::Point2D<f32, PhysicalPx>;
 
-/// Trait used for drawing text and text input elements with parley, where parley does the
-/// shaping and positioning, and the renderer is responsible for drawing just the glyphs.
-pub trait GlyphRenderer: crate::item_rendering::ItemRenderer {
-    /// A renderer-specific type for a brush used for fill and stroke of glyphs.
-    type PlatformBrush: Clone;
-
-    /// Returns the brush to be used for filling text.
-    fn platform_text_fill_brush(
-        &mut self,
-        brush: crate::Brush,
-        size: LogicalSize,
-    ) -> Option<Self::PlatformBrush>;
-
-    /// Returns a brush that's a solid fill of the specified color.
-    fn platform_brush_for_color(&mut self, color: &Color) -> Option<Self::PlatformBrush>;
-
-    /// Returns the brush to be used for stroking text.
-    fn platform_text_stroke_brush(
-        &mut self,
-        brush: crate::Brush,
-        physical_stroke_width: f32,
-        size: LogicalSize,
-    ) -> Option<Self::PlatformBrush>;
-
-    /// Draws the glyphs provided by glyphs_it with the specified font, font_size, and brush at the
-    /// given y offset. The `normalized_coords` are F2Dot14 values in fvar axis order for variable
-    /// font rendering. The `synthesis` contains design-space variation settings and faux
-    /// bold/italic hints from fontique.
-    fn draw_glyph_run(
-        &mut self,
-        font: &parley::FontData,
-        font_size: PhysicalLength,
-        normalized_coords: &[i16],
-        synthesis: &fontique::Synthesis,
-        brush: Self::PlatformBrush,
-        y_offset: PhysicalLength,
-        glyphs_it: &mut dyn Iterator<Item = parley::layout::Glyph>,
-    );
-
-    fn fill_rectangle_with_color(&mut self, physical_rect: PhysicalRect, color: Color) {
-        if let Some(platform_brush) = self.platform_brush_for_color(&color) {
-            self.fill_rectangle(physical_rect, platform_brush);
-        }
+impl From<parley::layout::Glyph> for RenderGlyph {
+    fn from(glyph: parley::layout::Glyph) -> Self {
+        Self { id: glyph.id, x: glyph.x, y: glyph.y, advance: glyph.advance }
     }
-
-    /// Fills the given rectangle with the specified color. This is used for drawing selection
-    /// rectangles as well as the text cursor.
-    fn fill_rectangle(&mut self, physical_rect: PhysicalRect, brush: Self::PlatformBrush);
 }
 
 pub use super::DEFAULT_FONT_SIZE;
@@ -483,10 +366,6 @@ fn create_text_paragraphs(
     paragraphs
 }
 
-/// Note: parley currently uses `WordBreak` while shaping via `analyze_text()`,
-/// so shaped paragraphs aren't identical across wrap modes. This is why `text_size()`
-/// doesn't use the `TextLayoutCache` — it would be incorrect to share cached paragraphs
-/// shaped with one wrap mode and reuse them with another.
 fn layout(
     layout_builder: &LayoutWithoutLineBreaksBuilder,
     font_context: &mut parley::FontContext,
@@ -603,9 +482,8 @@ fn get_or_create_text_paragraphs<'a>(
     font_context: &mut parley::FontContext,
 ) -> CachedParagraphsGuard<'a> {
     if let (Some(cache), Some(item_rc)) = (cache, item_rc) {
-        let mut entry = cache.inner.get_or_update_cache_entry_ref(item_rc, || {
-            #[cfg(feature = "testing")]
-            cache.cache_miss_count.set(cache.cache_miss_count.get() + 1);
+        let mut entry = cache.shaped().get_or_update_cache_entry_ref(item_rc, || {
+            cache.note_cache_miss();
             shape_paragraphs(text, Some(item_rc), scale_factor, font_context)
         });
         let paragraphs = std::mem::take(&mut *entry);
@@ -630,7 +508,7 @@ fn line_fits_height(block_max_coord: f32, max_physical_height: PhysicalLength) -
     max_physical_height.get().ceil() >= block_max_coord
 }
 
-struct TextParagraph {
+pub struct TextParagraph {
     range: Range<usize>,
     y: PhysicalLength,
     layout: parley::Layout<Brush>,
@@ -1160,14 +1038,14 @@ pub fn draw_text(
     let mut font_ctx = item_renderer.window().context().font_context().borrow_mut();
 
     let mut guard =
-        get_or_create_text_paragraphs(cache, item_rc, text, scale_factor, &mut font_ctx);
+        get_or_create_text_paragraphs(cache, item_rc, text, scale_factor, &mut font_ctx.inner);
 
     let (horizontal_align, vertical_align) = text.alignment();
     let text_overflow = text.overflow();
 
     let layout = layout(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         guard.paragraphs.take().unwrap_or_default(),
         scale_factor,
         LayoutOptions {
@@ -1214,13 +1092,14 @@ pub fn draw_text(
                   y_offset,
                   glyphs_it| {
                 item_renderer.draw_glyph_run(
-                    font,
+                    &font.data,
+                    font.index,
                     font_size,
                     normalized_coords,
                     synthesis,
                     brush,
                     y_offset,
-                    glyphs_it,
+                    &mut glyphs_it.map(RenderGlyph::from),
                 );
             },
         );
@@ -1237,7 +1116,7 @@ pub fn draw_text(
 
 #[cfg(feature = "std")]
 pub fn link_under_cursor(
-    font_context: &mut parley::FontContext,
+    font_context: &mut super::FontContext,
     scale_factor: ScaleFactor,
     text: Pin<&dyn crate::item_rendering::RenderText>,
     item_rc: &crate::item_tree::ItemRc,
@@ -1252,14 +1131,19 @@ pub fn link_under_cursor(
         scale_factor,
     );
 
-    let mut guard =
-        get_or_create_text_paragraphs(cache, Some(item_rc), text, scale_factor, font_context);
+    let mut guard = get_or_create_text_paragraphs(
+        cache,
+        Some(item_rc),
+        text,
+        scale_factor,
+        &mut font_context.inner,
+    );
 
     let (horizontal_align, vertical_align) = text.alignment();
 
     let layout = layout(
         &layout_builder,
-        font_context,
+        &mut font_context.inner,
         guard.paragraphs.take().unwrap_or_default(),
         scale_factor,
         LayoutOptions {
@@ -1362,7 +1246,7 @@ pub fn draw_text_input(
 
     let paragraphs_without_linebreaks = create_text_paragraphs(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         PlainOrStyledText::Plain(text),
         selection_and_color,
         Color::default(),
@@ -1370,7 +1254,7 @@ pub fn draw_text_input(
 
     let layout = layout(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         paragraphs_without_linebreaks,
         scale_factor,
         LayoutOptions::new_from_textinput(text_input, Some(width), Some(height)),
@@ -1405,13 +1289,14 @@ pub fn draw_text_input(
                   y_offset,
                   glyphs_it| {
                 item_renderer.draw_glyph_run(
-                    font,
+                    &font.data,
+                    font.index,
                     font_size,
                     normalized_coords,
                     synthesis,
                     brush,
                     y_offset,
-                    glyphs_it,
+                    &mut glyphs_it.map(RenderGlyph::from),
                 );
             },
         );
@@ -1429,34 +1314,30 @@ pub fn draw_text_input(
     item_renderer.restore_state();
 }
 
-pub fn text_size(
+fn measure_text_size(
     renderer: &dyn RendererSealed,
     text_item: Pin<&dyn crate::item_rendering::RenderString>,
     item_rc: &crate::item_tree::ItemRc,
     max_width: Option<LogicalLength>,
     text_wrap: TextWrap,
-    _cache: Option<&TextLayoutCache>,
 ) -> Option<LogicalSize> {
     let scale_factor = renderer.scale_factor()?;
+    let ctx = renderer.slint_context()?;
 
-    // Evaluate properties before borrowing font_context: both font_request()
-    // and text() can trigger property bindings that re-enter text_size for
-    // other elements, which would panic on a second borrow_mut().
+    // Read the text/font properties before borrowing font_context: both can trigger bindings that
+    // re-enter text_size for other elements and panic on a second borrow_mut(). Called from the
+    // size cache's update closure, these reads also register the cache dependencies.
     let font_request = text_item.font_request(item_rc);
     let text = text_item.text();
 
-    let ctx = renderer.slint_context()?;
     let mut font_ctx = ctx.font_context().borrow_mut();
-
     let layout_builder =
         LayoutWithoutLineBreaksBuilder::new(Some(font_request), text_wrap, None, scale_factor);
-
     let paragraphs_without_linebreaks =
-        create_text_paragraphs(&layout_builder, &mut font_ctx, text, None, Color::default());
-
+        create_text_paragraphs(&layout_builder, &mut font_ctx.inner, text, None, Color::default());
     let layout = layout(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         paragraphs_without_linebreaks,
         scale_factor,
         LayoutOptions {
@@ -1470,69 +1351,42 @@ pub fn text_size(
     Some(PhysicalSize::from_lengths(layout.max_width, layout.height) / scale_factor)
 }
 
+pub fn text_size(
+    renderer: &dyn RendererSealed,
+    text_item: Pin<&dyn crate::item_rendering::RenderString>,
+    item_rc: &crate::item_tree::ItemRc,
+    max_width: Option<LogicalLength>,
+    text_wrap: TextWrap,
+    cache: Option<&TextLayoutCache>,
+) -> Option<LogicalSize> {
+    let _ = cache;
+    measure_text_size(renderer, text_item, item_rc, max_width, text_wrap)
+}
+
 pub fn char_size(
-    font_ctx: &mut parley::FontContext,
+    font_ctx: &mut super::FontContext,
     text_item: Pin<&dyn crate::item_rendering::HasFont>,
     item_rc: &crate::item_tree::ItemRc,
     ch: char,
 ) -> Option<LogicalSize> {
-    let font_request = text_item.font_request(item_rc);
-    let font = font_request.query_fontique(&mut font_ctx.collection, &mut font_ctx.source_cache)?;
-
-    let char_map = font.charmap()?;
-
-    let face = skrifa::FontRef::from_index(font.blob.data(), font.index).unwrap();
-
-    let glyph_index = char_map.map(ch)?;
-
-    let pixel_size = font_request.pixel_size.unwrap_or(DEFAULT_FONT_SIZE);
-
-    let location = face.axes().location(font.synthesis.variation_settings());
-
-    let glyph_metrics = skrifa::metrics::GlyphMetrics::new(
-        &face,
-        skrifa::instance::Size::new(pixel_size.get()),
-        &location,
-    );
-
-    let advance_width = LogicalLength::new(glyph_metrics.advance_width(glyph_index.into())?);
-
-    let font_metrics = skrifa::metrics::Metrics::new(
-        &face,
-        skrifa::instance::Size::new(pixel_size.get()),
-        &location,
-    );
-
-    Some(LogicalSize::from_lengths(
-        advance_width,
-        LogicalLength::new(font_metrics.ascent - font_metrics.descent),
-    ))
+    super::fontcontext::char_size(
+        &mut font_ctx.inner.collection,
+        &mut font_ctx.inner.source_cache,
+        text_item,
+        item_rc,
+        ch,
+    )
 }
 
 pub fn font_metrics(
-    font_ctx: &mut parley::FontContext,
+    font_ctx: &mut super::FontContext,
     font_request: FontRequest,
 ) -> crate::items::FontMetrics {
-    let logical_pixel_size = font_request.pixel_size.unwrap_or(DEFAULT_FONT_SIZE).get();
-
-    let Some(font) =
-        font_request.query_fontique(&mut font_ctx.collection, &mut font_ctx.source_cache)
-    else {
-        return crate::items::FontMetrics::default();
-    };
-
-    let face = skrifa::FontRef::from_index(font.blob.data(), font.index).unwrap();
-    let location = face.axes().location(font.synthesis.variation_settings());
-    let metrics = face.metrics(skrifa::instance::Size::unscaled(), &location);
-
-    let units_per_em = metrics.units_per_em as f32;
-
-    crate::items::FontMetrics {
-        ascent: metrics.ascent * logical_pixel_size / units_per_em,
-        descent: metrics.descent * logical_pixel_size / units_per_em,
-        x_height: metrics.x_height.unwrap_or_default() * logical_pixel_size / units_per_em,
-        cap_height: metrics.cap_height.unwrap_or_default() * logical_pixel_size / units_per_em,
-    }
+    super::fontcontext::font_metrics(
+        &mut font_ctx.inner.collection,
+        &mut font_ctx.inner.source_cache,
+        font_request,
+    )
 }
 
 pub fn text_input_byte_offset_for_position(
@@ -1567,7 +1421,7 @@ pub fn text_input_byte_offset_for_position(
 
     let paragraphs_without_linebreaks = create_text_paragraphs(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         PlainOrStyledText::Plain(visual_representation.text.clone()),
         None,
         Color::default(),
@@ -1575,7 +1429,7 @@ pub fn text_input_byte_offset_for_position(
 
     let layout = layout(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         paragraphs_without_linebreaks,
         scale_factor,
         LayoutOptions::new_from_textinput(text_input, Some(width), Some(height)),
@@ -1623,7 +1477,7 @@ pub fn text_input_cursor_rect_for_byte_offset(
 
     let paragraphs_without_linebreaks = create_text_paragraphs(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         PlainOrStyledText::Plain(visual_representation.text),
         None,
         Color::default(),
@@ -1631,7 +1485,7 @@ pub fn text_input_cursor_rect_for_byte_offset(
 
     let layout = layout(
         &layout_builder,
-        &mut font_ctx,
+        &mut font_ctx.inner,
         paragraphs_without_linebreaks,
         scale_factor,
         LayoutOptions::new_from_textinput(text_input, Some(width), Some(height)),

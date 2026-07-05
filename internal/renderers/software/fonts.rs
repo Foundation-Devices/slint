@@ -134,8 +134,7 @@ impl i_slint_core::textlayout::FontMetrics<PhysicalLength> for Font {
 pub fn match_font(
     request: &FontRequest,
     scale_factor: ScaleFactor,
-    #[cfg(feature = "systemfonts")]
-    font_context: &mut i_slint_core::textlayout::sharedparley::parley::FontContext,
+    #[cfg(feature = "systemfonts")] font_context: &mut i_slint_core::textlayout::FontContext,
 ) -> Font {
     let requested_weight = request
         .weight
@@ -165,8 +164,8 @@ pub fn match_font(
             if let Some(vectorfont) = systemfonts::match_font(
                 request,
                 scale_factor,
-                &mut font_context.collection,
-                &mut font_context.source_cache,
+                &mut font_context.inner.collection,
+                &mut font_context.inner.source_cache,
             ) {
                 return vectorfont.into();
             }
@@ -185,8 +184,8 @@ pub fn match_font(
                 return systemfonts::fallbackfont(
                     request,
                     scale_factor,
-                    &mut font_context.collection,
-                    &mut font_context.source_cache,
+                    &mut font_context.inner.collection,
+                    &mut font_context.inner.source_cache,
                 )
                 .into();
                 #[cfg(not(feature = "systemfonts"))]

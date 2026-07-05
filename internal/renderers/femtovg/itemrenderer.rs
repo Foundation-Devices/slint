@@ -24,7 +24,8 @@ use i_slint_core::lengths::{
     LogicalBorderRadius, LogicalLength, LogicalPoint, LogicalRect, LogicalSize, LogicalVector,
     RectLengths, ScaleFactor, logical_size_from_api,
 };
-use i_slint_core::textlayout::sharedparley::{self, GlyphRenderer, fontique, parley};
+use i_slint_core::textlayout::glyphrenderer::{self, GlyphRenderer, RenderGlyph};
+use i_slint_core::textlayout::sharedparley::{self, fontique};
 use i_slint_core::{Brush, Color, ImageInner, SharedString};
 
 use crate::images::TextureImporter;
@@ -989,15 +990,17 @@ impl<'a, R: femtovg::Renderer + TextureImporter> GlyphRenderer for GLItemRendere
 
     fn draw_glyph_run(
         &mut self,
-        font: &parley::FontData,
+        font_blob: &fontique::Blob<u8>,
+        font_index: u32,
         font_size: PhysicalLength,
         normalized_coords: &[i16],
         _synthesis: &fontique::Synthesis,
         mut brush: Self::PlatformBrush,
-        y_offset: sharedparley::PhysicalLength,
-        glyphs_it: &mut dyn Iterator<Item = parley::layout::Glyph>,
+        y_offset: glyphrenderer::PhysicalLength,
+        glyphs_it: &mut dyn Iterator<Item = RenderGlyph>,
     ) {
-        let font_id = font_cache::FONT_CACHE.with(|cache| cache.borrow_mut().font(font));
+        let font_id =
+            font_cache::FONT_CACHE.with(|cache| cache.borrow_mut().font(font_blob, font_index));
 
         let glyphs_it = glyphs_it.map(|glyph| femtovg::PositionedGlyph {
             x: glyph.x,
@@ -1022,7 +1025,7 @@ impl<'a, R: femtovg::Renderer + TextureImporter> GlyphRenderer for GLItemRendere
 
     fn fill_rectangle(
         &mut self,
-        physical_rect: sharedparley::PhysicalRect,
+        physical_rect: glyphrenderer::PhysicalRect,
         brush: Self::PlatformBrush,
     ) {
         let paint = match brush {

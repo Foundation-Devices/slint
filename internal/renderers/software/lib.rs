@@ -1194,7 +1194,7 @@ impl RendererSealed for SoftwareRenderer {
     ) -> Result<(), std::boxed::Box<dyn std::error::Error>> {
         let ctx = self.slint_context().ok_or("slint platform not initialized")?;
         self::fonts::systemfonts::register_font_from_path(
-            &mut ctx.font_context().borrow_mut().collection,
+            &mut ctx.font_context().borrow_mut().inner.collection,
             path,
         )
     }
@@ -3734,20 +3734,21 @@ impl<T: ProcessScene> sharedparley::GlyphRenderer for SceneBuilder<'_, T> {
 
     fn draw_glyph_run(
         &mut self,
-        font: &sharedparley::parley::FontData,
+        font_blob: &fontique::Blob<u8>,
+        font_index: u32,
         font_size: sharedparley::PhysicalLength,
         normalized_coords: &[i16],
         _synthesis: &fontique::Synthesis,
         color: Self::PlatformBrush,
         y_offset: sharedparley::PhysicalLength,
-        glyphs_it: &mut dyn Iterator<Item = sharedparley::parley::layout::Glyph>,
+        glyphs_it: &mut dyn Iterator<Item = sharedparley::RenderGlyph>,
     ) {
         let slint_context = self.window.context();
         let (swash_key, swash_offset) =
-            fonts::systemfonts::get_swash_font_info(&font.data, font.index);
+            fonts::systemfonts::get_swash_font_info(font_blob, font_index);
         let font = fonts::vectorfont::VectorFont::new_from_blob_and_index_with_coords(
-            font.data.clone(),
-            font.index,
+            font_blob.clone(),
+            font_index,
             swash_key,
             swash_offset,
             font_size.cast(),

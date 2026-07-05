@@ -103,11 +103,12 @@ pub fn configure_test_fonts() {
         || panic!("platform not set, initialize the testing backend first"),
         |ctx| {
             let mut font_context = ctx.font_context().borrow_mut();
-            font_context.collection = fontique::Collection::new(fontique::CollectionOptions {
-                shared: true,
-                system_fonts: false,
-            });
-            font_context.source_cache = fontique::SourceCache::new_shared();
+            font_context.inner.collection =
+                fontique::Collection::new(fontique::CollectionOptions {
+                    shared: true,
+                    system_fonts: false,
+                });
+            font_context.inner.source_cache = fontique::SourceCache::new_shared();
             font_context.clear_registered_static_fonts();
 
             let primary =
@@ -122,7 +123,7 @@ pub fn configure_test_fonts() {
 
             let mut chain_families: Vec<fontique::FamilyId> = Vec::new();
             for file in core::iter::once(primary).chain(fallback_files) {
-                let fonts = font_context.collection.register_fonts(
+                let fonts = font_context.inner.collection.register_fonts(
                     fontique::Blob::new(std::sync::Arc::new(file.contents())),
                     None,
                 );
@@ -138,6 +139,7 @@ pub fn configure_test_fonts() {
                 FALLBACK_FAMILIES.into_iter().chain([fontique::GenericFamily::Monospace])
             {
                 font_context
+                    .inner
                     .collection
                     .set_generic_families(generic_family, chain_families.iter().copied());
             }

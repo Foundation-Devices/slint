@@ -3,7 +3,7 @@
 
 use clru::CLruCache;
 use i_slint_common::sharedfontique::HashedBlob;
-use i_slint_core::textlayout::sharedparley::{fontique, parley};
+use i_slint_core::textlayout::sharedparley::fontique;
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -28,7 +28,8 @@ impl Default for FontCache {
 impl FontCache {
     pub fn font_with_variations(
         &mut self,
-        font: &parley::FontData,
+        font_blob: &fontique::Blob<u8>,
+        font_index: u32,
         synthesis: &fontique::Synthesis,
     ) -> Option<skia_safe::Typeface> {
         let variation_settings = synthesis.variation_settings();
@@ -43,13 +44,13 @@ impl FontCache {
             variations_hash = hasher.finish();
         }
 
-        let key = (font.data.clone().into(), font.index, variations_hash);
+        let key = (font_blob.clone().into(), font_index, variations_hash);
 
         if let Some(cached) = self.fonts.get(&key) {
             return cached.clone();
         }
 
-        let mut typeface = self.load_typeface_internal(font);
+        let mut typeface = self.load_typeface_internal(font_blob, font_index);
 
         if !variation_settings.is_empty() {
             typeface = typeface.and_then(|base| {
@@ -76,10 +77,14 @@ impl FontCache {
         typeface
     }
 
-    fn load_typeface_internal(&self, font: &parley::FontData) -> Option<skia_safe::Typeface> {
+    fn load_typeface_internal(
+        &self,
+        font_blob: &fontique::Blob<u8>,
+        font_index: u32,
+    ) -> Option<skia_safe::Typeface> {
         let typeface = self.font_mgr.new_from_data(
-            font.data.as_ref(),
-            if font.index > 0 { Some(font.index as _) } else { None },
+            font_blob.as_ref(),
+            if font_index > 0 { Some(font_index as _) } else { None },
         );
 
         // Due to  https://issues.skia.org/issues/310510989, fonts from true type collections

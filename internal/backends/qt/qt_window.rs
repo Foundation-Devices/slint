@@ -32,7 +32,8 @@ use i_slint_core::lengths::{
 };
 use i_slint_core::platform::{PlatformError, WindowEvent};
 use i_slint_core::string::ToSharedString;
-use i_slint_core::textlayout::sharedparley::{self, GlyphRenderer, fontique, parley};
+use i_slint_core::textlayout::glyphrenderer::{self, GlyphRenderer, RenderGlyph};
+use i_slint_core::textlayout::sharedparley::{self, fontique};
 use i_slint_core::window::{WindowAdapter, WindowAdapterInternal, WindowInner, WindowKind};
 use i_slint_core::{ImageInner, SharedString};
 
@@ -1314,16 +1315,22 @@ impl GlyphRenderer for QtItemRenderer<'_> {
 
     fn draw_glyph_run(
         &mut self,
-        font: &sharedparley::parley::FontData,
-        font_size: sharedparley::PhysicalLength,
+        font_blob: &fontique::Blob<u8>,
+        font_index: u32,
+        font_size: glyphrenderer::PhysicalLength,
         _normalized_coords: &[i16],
         synthesis: &fontique::Synthesis,
         brush: Self::PlatformBrush,
-        y_offset: sharedparley::PhysicalLength,
-        glyphs_it: &mut dyn Iterator<Item = sharedparley::parley::layout::Glyph>,
+        y_offset: glyphrenderer::PhysicalLength,
+        glyphs_it: &mut dyn Iterator<Item = RenderGlyph>,
     ) {
         let Some(mut raw_font) = FONT_CACHE.with(|cache| {
-            cache.borrow_mut().font_with_variations(font, font_size.get(), synthesis)
+            cache.borrow_mut().font_with_variations(
+                font_blob,
+                font_index,
+                font_size.get(),
+                synthesis,
+            )
         }) else {
             return;
         };
@@ -1397,7 +1404,7 @@ impl GlyphRenderer for QtItemRenderer<'_> {
         }
     }
 
-    fn fill_rectangle(&mut self, physical_rect: sharedparley::PhysicalRect, brush: GlyphBrush) {
+    fn fill_rectangle(&mut self, physical_rect: glyphrenderer::PhysicalRect, brush: GlyphBrush) {
         let qt_brush = match brush {
             GlyphBrush::Fill(qt_brush) => qt_brush,
             _ => return,
@@ -1503,12 +1510,12 @@ pub struct FontCache {
 }
 
 impl FontCache {
-    pub fn font(&mut self, font: &parley::FontData) -> Option<QRawFont> {
+    pub fn font(&mut self, font_blob: &fontique::Blob<u8>, font_index: u32) -> Option<QRawFont> {
         self.fonts
-            .entry((font.data.clone().into(), font.index))
+            .entry((font_blob.clone().into(), font_index))
             .or_insert_with(move || {
                 let mut raw_font = QRawFont::default();
-                raw_font.load_from_data(font.data.as_ref(), 12.0);
+                raw_font.load_from_data(font_blob.as_ref(), 12.0);
                 if raw_font.is_valid() { Some(raw_font) } else { None }
             })
             .clone()
@@ -1516,15 +1523,15 @@ impl FontCache {
 
     /// Get or create a QFontDatabase registration for the given font data.
     /// Returns the family name if registration succeeded.
-    fn ensure_registered(&mut self, font: &parley::FontData) -> Option<String> {
-        let blob_key: HashedBlob = font.data.clone().into();
+    fn ensure_registered(&mut self, font_blob: &fontique::Blob<u8>) -> Option<String> {
+        let blob_key: HashedBlob = font_blob.clone().into();
         if let Some((_id, family)) = self.registrations.get(&blob_key) {
             if !family.is_empty() {
                 return Some(family.clone());
             }
             return None;
         }
-        let id = register_font_with_database(font.data.as_ref());
+        let id = register_font_with_database(font_blob.as_ref());
         let family = if id >= 0 { font_family_for_registration(id) } else { String::new() };
         let result = if !family.is_empty() { Some(family.clone()) } else { None };
         self.registrations.insert(blob_key, (id, family));
@@ -1535,15 +1542,16 @@ impl FontCache {
     /// Falls back to the base font if Qt < 6.7 or registration fails.
     pub fn font_with_variations(
         &mut self,
-        font: &parley::FontData,
+        font_blob: &fontique::Blob<u8>,
+        font_index: u32,
         pixel_size: f32,
         synthesis: &fontique::Synthesis,
     ) -> Option<QRawFont> {
         let variation_settings = synthesis.variation_settings();
         if variation_settings.is_empty() {
-            return self.font(font);
+            return self.font(font_blob, font_index);
         }
-        let family = self.ensure_registered(font)?;
+        let family = self.ensure_registered(font_blob)?;
         let (tags, values): (Vec<u32>, Vec<f32>) = variation_settings
             .iter()
             .map(|&(tag, value)| {
@@ -1552,7 +1560,7 @@ impl FontCache {
             })
             .unzip();
         let raw_font = raw_font_with_variations(&family, pixel_size, &tags, &values);
-        if raw_font.is_valid() { Some(raw_font) } else { self.font(font) }
+        if raw_font.is_valid() { Some(raw_font) } else { self.font(font_blob, font_index) }
     }
 }
 
@@ -2677,7 +2685,7 @@ impl i_slint_core::renderer::RendererSealed for QtWindow {
         let requested_path = path.canonicalize().unwrap_or_else(|_| path.into());
         let contents = std::fs::read(requested_path)?;
         let ctx = self.slint_context().ok_or("slint platform not initialized")?;
-        ctx.font_context().borrow_mut().collection.register_fonts(contents.into(), None);
+        ctx.font_context().borrow_mut().inner.collection.register_fonts(contents.into(), None);
         Ok(())
     }
 

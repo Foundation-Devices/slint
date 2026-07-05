@@ -4,8 +4,7 @@
 // cspell:ignore Noto fontconfig
 
 use femtovg::TextContext;
-use i_slint_common::sharedfontique::HashedBlob;
-use i_slint_core::textlayout::sharedparley::parley;
+use i_slint_common::sharedfontique::{HashedBlob, fontique};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -22,12 +21,14 @@ impl Default for FontCache {
 }
 
 impl FontCache {
-    pub fn font(&mut self, font: &parley::FontData) -> femtovg::FontId {
+    pub fn font(&mut self, blob: &fontique::Blob<u8>, index: u32) -> femtovg::FontId {
         let text_context = self.text_context.clone();
+        let blob = blob.clone();
 
-        *self.fonts.entry((font.data.clone().into(), font.index)).or_insert_with(move || {
-            text_context.add_shared_font_with_index(font.data.clone(), font.index).unwrap()
-        })
+        *self
+            .fonts
+            .entry((blob.clone().into(), index))
+            .or_insert_with(move || text_context.add_shared_font_with_index(blob, index).unwrap())
     }
 }
 

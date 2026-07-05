@@ -19,7 +19,8 @@ use i_slint_core::lengths::{
     LogicalBorderRadius, LogicalLength, LogicalPoint, LogicalPx, LogicalRect, LogicalSize,
     LogicalVector, PhysicalPx, RectLengths, ScaleFactor, SizeLengths, logical_size_from_api,
 };
-use i_slint_core::textlayout::sharedparley::{self, GlyphRenderer, fontique};
+use i_slint_core::textlayout::glyphrenderer::{self, GlyphRenderer, RenderGlyph};
+use i_slint_core::textlayout::sharedparley::{self, fontique};
 use i_slint_core::window::WindowInner;
 use i_slint_core::{Brush, Color, SharedString};
 use skia_safe::{Matrix, TileMode};
@@ -1162,17 +1163,18 @@ impl GlyphRenderer for SkiaItemRenderer<'_> {
 
     fn draw_glyph_run(
         &mut self,
-        font: &sharedparley::parley::FontData,
+        font_blob: &fontique::Blob<u8>,
+        font_index: u32,
         font_size: PhysicalLength,
         _normalized_coords: &[i16],
         synthesis: &fontique::Synthesis,
         brush: Self::PlatformBrush,
-        y_offset: sharedparley::PhysicalLength,
-        glyphs_it: &mut dyn Iterator<Item = sharedparley::parley::layout::Glyph>,
+        y_offset: glyphrenderer::PhysicalLength,
+        glyphs_it: &mut dyn Iterator<Item = RenderGlyph>,
     ) {
-        let Some(type_face) = crate::font_cache::FONT_CACHE
-            .with_borrow_mut(|font_cache| font_cache.font_with_variations(font, synthesis))
-        else {
+        let Some(type_face) = crate::font_cache::FONT_CACHE.with_borrow_mut(|font_cache| {
+            font_cache.font_with_variations(font_blob, font_index, synthesis)
+        }) else {
             return;
         };
         let mut font = skia_safe::Font::from_typeface(type_face, font_size.get());
@@ -1194,7 +1196,7 @@ impl GlyphRenderer for SkiaItemRenderer<'_> {
 
     fn fill_rectangle(
         &mut self,
-        physical_rect: sharedparley::PhysicalRect,
+        physical_rect: glyphrenderer::PhysicalRect,
         paint: Self::PlatformBrush,
     ) {
         self.canvas.draw_rect(

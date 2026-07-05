@@ -45,12 +45,23 @@ mod linebreak_simple;
 #[cfg(not(feature = "unicode-linebreak"))]
 use linebreak_simple::{BreakOpportunity, LineBreakIterator};
 
+#[cfg(feature = "shared-fontique")]
+/// cbindgen:ignore
+pub mod fontcontext;
 mod fragments;
 mod glyphclusters;
+#[cfg(feature = "shared-fontique")]
+/// cbindgen:ignore
+pub mod glyphrenderer;
+#[cfg(feature = "shared-fontique")]
+/// cbindgen:ignore
+pub mod layoutcache;
 mod shaping;
 #[cfg(feature = "shared-parley")]
 /// cbindgen:ignore
 pub mod sharedparley;
+#[cfg(feature = "shared-fontique")]
+pub use fontcontext::FontContext;
 use shaping::ShapeBuffer;
 pub use shaping::{AbstractFont, FontMetrics, Glyph, TextShaper};
 

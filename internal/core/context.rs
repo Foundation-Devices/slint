@@ -92,8 +92,8 @@ pub(crate) struct SlintContextInner {
     pub(crate) log_message_handler: RefCell<Option<crate::debug_log::LogMessageHandler>>,
     #[cfg(all(unix, not(target_os = "macos")))]
     xdg_app_id: core::cell::RefCell<Option<crate::SharedString>>,
-    #[cfg(feature = "shared-parley")]
-    pub(crate) font_context: core::cell::RefCell<crate::textlayout::sharedparley::FontContext>,
+    #[cfg(feature = "shared-fontique")]
+    pub(crate) font_context: core::cell::RefCell<crate::textlayout::FontContext>,
     #[cfg(feature = "shared-swash")]
     pub(crate) swash_scale_context: core::cell::RefCell<swash::scale::ScaleContext>,
     pub(crate) modifiers: Cell<InternalKeyboardModifierState>,
@@ -108,7 +108,7 @@ pub struct SlintContext(pub(crate) core::pin::Pin<Rc<SlintContextInner>>);
 impl SlintContext {
     /// Create a new context with a given platform
     pub fn new(platform: Box<dyn Platform + 'static>) -> Self {
-        #[cfg(feature = "shared-parley")]
+        #[cfg(feature = "shared-fontique")]
         let collection = i_slint_common::sharedfontique::create_collection(true);
 
         Self(Rc::pin(SlintContextInner {
@@ -135,16 +135,8 @@ impl SlintContext {
             log_message_handler: Default::default(),
             #[cfg(all(unix, not(target_os = "macos")))]
             xdg_app_id: Default::default(),
-            #[cfg(feature = "shared-parley")]
-            font_context: {
-                let font_context = parley::FontContext {
-                    collection: collection.inner,
-                    source_cache: collection.source_cache,
-                };
-                core::cell::RefCell::new(crate::textlayout::sharedparley::FontContext::new(
-                    font_context,
-                ))
-            },
+            #[cfg(feature = "shared-fontique")]
+            font_context: core::cell::RefCell::new(crate::textlayout::FontContext::new(collection)),
             #[cfg(feature = "shared-swash")]
             swash_scale_context: core::cell::RefCell::new(swash::scale::ScaleContext::new()),
             modifiers: Cell::new(Default::default()),
@@ -157,10 +149,8 @@ impl SlintContext {
     }
 
     /// Return a reference to the font context
-    #[cfg(feature = "shared-parley")]
-    pub fn font_context(
-        &self,
-    ) -> &core::cell::RefCell<crate::textlayout::sharedparley::FontContext> {
+    #[cfg(feature = "shared-fontique")]
+    pub fn font_context(&self) -> &core::cell::RefCell<crate::textlayout::FontContext> {
         &self.0.font_context
     }
 
