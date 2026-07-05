@@ -3,7 +3,7 @@
 
 //! Regression test for https://github.com/slint-ui/slint/issues/11765
 //!
-//! `sharedparley::text_size` borrows `font_context()` at the start, then calls
+//! The text engine's `measure_text_size` borrows `font_context()`, then calls
 //! `text_item.text()` which evaluates a property binding. If that binding reads
 //! a layout property of a container with other text elements (e.g.
 //! `header.min-width / 1px`), computing that layout recurses into `text_size`

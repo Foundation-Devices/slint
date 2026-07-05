@@ -11469,6 +11469,7 @@ dependencies = [
  "i-slint-compiler",
  "i-slint-core",
  "i-slint-renderer-skia",
+ "i-slint-renderer-software",
  "image",
  "slint",
  "slint-interpreter",

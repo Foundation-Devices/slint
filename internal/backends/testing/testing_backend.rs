@@ -7,7 +7,7 @@ use i_slint_core::item_rendering::HasFont;
 use i_slint_core::lengths::{LogicalLength, LogicalPoint, LogicalRect, LogicalSize};
 use i_slint_core::platform::PlatformError;
 use i_slint_core::renderer::{Renderer, RendererSealed};
-use i_slint_core::textlayout::sharedparley;
+use i_slint_core::textlayout::{self, fontcontext};
 use i_slint_core::window::{
     InputMethodRequest, WindowAdapter, WindowAdapterInternal, WindowInner, WindowKind,
 };
@@ -436,7 +436,7 @@ impl RendererSealed for TestingWindow {
             let height = num_lines as f32 * pixel_size;
             LogicalSize::new(width, height)
         } else {
-            sharedparley::text_size(self, text_item, item_rc, max_width, text_wrap, None)
+            textlayout::text_size(self, text_item, item_rc, max_width, text_wrap, None)
                 .unwrap_or_default()
         }
     }
@@ -456,7 +456,7 @@ impl RendererSealed for TestingWindow {
                 return LogicalSize::default();
             };
             let mut font_ctx = ctx.font_context().borrow_mut();
-            sharedparley::char_size(&mut font_ctx, text_item, item_rc, ch).unwrap_or_default()
+            fontcontext::char_size(&mut font_ctx, text_item, item_rc, ch).unwrap_or_default()
         }
     }
 
@@ -477,7 +477,7 @@ impl RendererSealed for TestingWindow {
                 return Default::default();
             };
             let mut font_ctx = ctx.font_context().borrow_mut();
-            sharedparley::font_metrics(&mut font_ctx, font_request)
+            fontcontext::font_metrics(&mut font_ctx, font_request)
         }
     }
 
@@ -506,7 +506,7 @@ impl RendererSealed for TestingWindow {
             let column = ((pos.x / pixel_size).max(0.) as usize).min(line.len());
             offset + column
         } else {
-            sharedparley::text_input_byte_offset_for_position(self, text_input, item_rc, pos)
+            textlayout::text_input_byte_offset_for_position(self, text_input, item_rc, pos)
         }
     }
 
@@ -527,7 +527,7 @@ impl RendererSealed for TestingWindow {
                 Size2D::new(1., pixel_size),
             )
         } else {
-            sharedparley::text_input_cursor_rect_for_byte_offset(
+            textlayout::text_input_cursor_rect_for_byte_offset(
                 self,
                 text_input,
                 item_rc,

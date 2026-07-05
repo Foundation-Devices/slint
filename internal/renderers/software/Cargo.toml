@@ -21,7 +21,6 @@ systemfonts = [
   "i-slint-common/shared-fontique",
   "dep:skrifa",
   "dep:swash",
-  "i-slint-core/shared-parley",
   "i-slint-core/shared-swash",
   "std",
   "dep:clru",

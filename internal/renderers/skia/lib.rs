@@ -31,7 +31,7 @@ use i_slint_core::lengths::{
 use i_slint_core::partial_renderer::{DirtyRegion, PartialRenderingState};
 use i_slint_core::platform::PlatformError;
 use i_slint_core::renderer::DrawOutcome;
-use i_slint_core::textlayout::sharedparley;
+use i_slint_core::textlayout::{self, fontcontext, sharedparley};
 use i_slint_core::window::{WindowAdapter, WindowInner};
 
 type PhysicalLength = euclid::Length<f32, PhysicalPx>;
@@ -872,7 +872,7 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         max_width: Option<LogicalLength>,
         text_wrap: TextWrap,
     ) -> LogicalSize {
-        sharedparley::text_size(
+        textlayout::text_size(
             self,
             text_item,
             item_rc,
@@ -892,7 +892,7 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         self.slint_context()
             .and_then(|ctx| {
                 let mut font_ctx = ctx.font_context().borrow_mut();
-                sharedparley::char_size(&mut font_ctx, text_item, item_rc, ch)
+                fontcontext::char_size(&mut font_ctx, text_item, item_rc, ch)
             })
             .unwrap_or_default()
     }
@@ -904,7 +904,7 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         self.slint_context()
             .map(|ctx| {
                 let mut font_ctx = ctx.font_context().borrow_mut();
-                sharedparley::font_metrics(&mut font_ctx, font_request)
+                fontcontext::font_metrics(&mut font_ctx, font_request)
             })
             .unwrap_or_default()
     }
@@ -915,7 +915,7 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         item_rc: &i_slint_core::item_tree::ItemRc,
         pos: LogicalPoint,
     ) -> usize {
-        sharedparley::text_input_byte_offset_for_position(self, text_input, item_rc, pos)
+        textlayout::text_input_byte_offset_for_position(self, text_input, item_rc, pos)
     }
 
     fn text_input_cursor_rect_for_byte_offset(
@@ -924,7 +924,7 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         item_rc: &i_slint_core::item_tree::ItemRc,
         byte_offset: usize,
     ) -> LogicalRect {
-        sharedparley::text_input_cursor_rect_for_byte_offset(self, text_input, item_rc, byte_offset)
+        textlayout::text_input_cursor_rect_for_byte_offset(self, text_input, item_rc, byte_offset)
     }
 
     fn register_font_from_memory(

@@ -7,7 +7,7 @@ pub use parley::fontique;
 
 use crate::item_rendering::HasFont;
 use crate::{
-    Color,
+    Color, SharedString,
     graphics::FontRequest,
     item_rendering::PlainOrStyledText,
     items::TextStrokeStyle,
@@ -1314,7 +1314,7 @@ pub fn draw_text_input(
     item_renderer.restore_state();
 }
 
-fn measure_text_size(
+pub fn measure_text_size(
     renderer: &dyn RendererSealed,
     text_item: Pin<&dyn crate::item_rendering::RenderString>,
     item_rc: &crate::item_tree::ItemRc,
@@ -1351,145 +1351,68 @@ fn measure_text_size(
     Some(PhysicalSize::from_lengths(layout.max_width, layout.height) / scale_factor)
 }
 
-pub fn text_size(
-    renderer: &dyn RendererSealed,
-    text_item: Pin<&dyn crate::item_rendering::RenderString>,
-    item_rc: &crate::item_tree::ItemRc,
-    max_width: Option<LogicalLength>,
-    text_wrap: TextWrap,
-    cache: Option<&TextLayoutCache>,
-) -> Option<LogicalSize> {
-    let _ = cache;
-    measure_text_size(renderer, text_item, item_rc, max_width, text_wrap)
-}
-
-pub fn char_size(
-    font_ctx: &mut super::FontContext,
-    text_item: Pin<&dyn crate::item_rendering::HasFont>,
-    item_rc: &crate::item_tree::ItemRc,
-    ch: char,
-) -> Option<LogicalSize> {
-    super::fontcontext::char_size(
-        &mut font_ctx.inner.collection,
-        &mut font_ctx.inner.source_cache,
-        text_item,
-        item_rc,
-        ch,
-    )
-}
-
-pub fn font_metrics(
-    font_ctx: &mut super::FontContext,
-    font_request: FontRequest,
-) -> crate::items::FontMetrics {
-    super::fontcontext::font_metrics(
-        &mut font_ctx.inner.collection,
-        &mut font_ctx.inner.source_cache,
-        font_request,
-    )
-}
-
-pub fn text_input_byte_offset_for_position(
+/// Lay out `visual_text` with the text input's font, wrapping, geometry, and alignment.
+fn visual_text_layout(
     renderer: &dyn RendererSealed,
     text_input: Pin<&crate::items::TextInput>,
     item_rc: &crate::item_tree::ItemRc,
-    pos: LogicalPoint,
-) -> usize {
-    let Some(scale_factor) = renderer.scale_factor() else {
-        return 0;
-    };
-    let pos: PhysicalPoint = pos * scale_factor;
-
-    let width = text_input.width();
-    let height = text_input.height();
-    if width.get() <= 0. || height.get() <= 0. || pos.y < 0. {
-        return 0;
-    }
-
+    visual_text: &SharedString,
+    scale_factor: ScaleFactor,
+) -> Option<Layout> {
     let layout_builder = LayoutWithoutLineBreaksBuilder::new(
         Some(text_input.font_request(item_rc)),
         text_input.wrap(),
         None,
         scale_factor,
     );
-    let visual_representation = text_input.visual_representation(None);
+    let width = text_input.width();
+    let height = text_input.height();
 
-    let Some(ctx) = renderer.slint_context() else {
-        return 0;
-    };
+    let ctx = renderer.slint_context()?;
     let mut font_ctx = ctx.font_context().borrow_mut();
 
     let paragraphs_without_linebreaks = create_text_paragraphs(
         &layout_builder,
         &mut font_ctx.inner,
-        PlainOrStyledText::Plain(visual_representation.text.clone()),
+        PlainOrStyledText::Plain(visual_text.clone()),
         None,
         Color::default(),
     );
 
-    let layout = layout(
+    Some(layout(
         &layout_builder,
         &mut font_ctx.inner,
         paragraphs_without_linebreaks,
         scale_factor,
         LayoutOptions::new_from_textinput(text_input, Some(width), Some(height)),
-    );
-    let byte_offset = layout.byte_offset_from_point(pos);
-    visual_representation.map_byte_offset_from_visual_text_to_actual_text(byte_offset)
+    ))
 }
 
-pub fn text_input_cursor_rect_for_byte_offset(
+/// The byte offset into `visual_text` for a click at `pos`, in physical pixels.
+/// `None` when the renderer has no context to lay text out with.
+pub fn visual_text_byte_offset_for_position(
     renderer: &dyn RendererSealed,
     text_input: Pin<&crate::items::TextInput>,
     item_rc: &crate::item_tree::ItemRc,
+    visual_text: &SharedString,
+    pos: PhysicalPoint,
+    scale_factor: ScaleFactor,
+) -> Option<usize> {
+    let layout = visual_text_layout(renderer, text_input, item_rc, visual_text, scale_factor)?;
+    Some(layout.byte_offset_from_point(pos))
+}
+
+/// The cursor rectangle in physical pixels for a byte offset into `visual_text`.
+/// `None` when the renderer has no context to lay text out with.
+pub fn visual_text_cursor_rect_for_byte_offset(
+    renderer: &dyn RendererSealed,
+    text_input: Pin<&crate::items::TextInput>,
+    item_rc: &crate::item_tree::ItemRc,
+    visual_text: &SharedString,
     byte_offset: usize,
-) -> LogicalRect {
-    let Some(scale_factor) = renderer.scale_factor() else {
-        return LogicalRect::default();
-    };
-
-    let layout_builder = LayoutWithoutLineBreaksBuilder::new(
-        Some(text_input.font_request(item_rc)),
-        text_input.wrap(),
-        None,
-        scale_factor,
-    );
-
-    let width = text_input.width();
-    let height = text_input.height();
-    if width.get() <= 0. || height.get() <= 0. {
-        return LogicalRect::new(
-            LogicalPoint::default(),
-            LogicalSize::from_lengths(LogicalLength::new(1.0), layout_builder.pixel_size),
-        );
-    }
-
-    let visual_representation = text_input.visual_representation(None);
-    let cursor_width = text_input.text_cursor_width() * scale_factor;
-
-    let Some(ctx) = renderer.slint_context() else {
-        return LogicalRect::default();
-    };
-
-    let mut font_ctx = ctx.font_context().borrow_mut();
-
-    let byte_offset = visual_representation.map_byte_offset_from_actual_to_visual_text(byte_offset);
-
-    let paragraphs_without_linebreaks = create_text_paragraphs(
-        &layout_builder,
-        &mut font_ctx.inner,
-        PlainOrStyledText::Plain(visual_representation.text),
-        None,
-        Color::default(),
-    );
-
-    let layout = layout(
-        &layout_builder,
-        &mut font_ctx.inner,
-        paragraphs_without_linebreaks,
-        scale_factor,
-        LayoutOptions::new_from_textinput(text_input, Some(width), Some(height)),
-    );
-    let cursor_rect = layout.cursor_rect_for_byte_offset(byte_offset, cursor_width);
-    cursor_rect / scale_factor
+    cursor_width: PhysicalLength,
+    scale_factor: ScaleFactor,
+) -> Option<PhysicalRect> {
+    let layout = visual_text_layout(renderer, text_input, item_rc, visual_text, scale_factor)?;
+    Some(layout.cursor_rect_for_byte_offset(byte_offset, cursor_width))
 }

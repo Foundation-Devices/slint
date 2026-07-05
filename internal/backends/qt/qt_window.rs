@@ -34,6 +34,7 @@ use i_slint_core::platform::{PlatformError, WindowEvent};
 use i_slint_core::string::ToSharedString;
 use i_slint_core::textlayout::glyphrenderer::{self, GlyphRenderer, RenderGlyph};
 use i_slint_core::textlayout::sharedparley::{self, fontique};
+use i_slint_core::textlayout::{self, fontcontext};
 use i_slint_core::window::{WindowAdapter, WindowAdapterInternal, WindowInner, WindowKind};
 use i_slint_core::{ImageInner, SharedString};
 
@@ -2614,7 +2615,7 @@ impl i_slint_core::renderer::RendererSealed for QtWindow {
         max_width: Option<LogicalLength>,
         text_wrap: TextWrap,
     ) -> LogicalSize {
-        sharedparley::text_size(
+        textlayout::text_size(
             self,
             text_item,
             item_rc,
@@ -2634,7 +2635,7 @@ impl i_slint_core::renderer::RendererSealed for QtWindow {
         self.slint_context()
             .and_then(|ctx| {
                 let mut font_ctx = ctx.font_context().borrow_mut();
-                sharedparley::char_size(&mut font_ctx, text_item, item_rc, ch)
+                fontcontext::char_size(&mut font_ctx, text_item, item_rc, ch)
             })
             .unwrap_or_default()
     }
@@ -2646,7 +2647,7 @@ impl i_slint_core::renderer::RendererSealed for QtWindow {
         self.slint_context()
             .map(|ctx| {
                 let mut font_ctx = ctx.font_context().borrow_mut();
-                sharedparley::font_metrics(&mut font_ctx, font_request)
+                fontcontext::font_metrics(&mut font_ctx, font_request)
             })
             .unwrap_or_default()
     }
@@ -2657,7 +2658,7 @@ impl i_slint_core::renderer::RendererSealed for QtWindow {
         item_rc: &i_slint_core::item_tree::ItemRc,
         pos: LogicalPoint,
     ) -> usize {
-        sharedparley::text_input_byte_offset_for_position(self, text_input, item_rc, pos)
+        textlayout::text_input_byte_offset_for_position(self, text_input, item_rc, pos)
     }
 
     fn text_input_cursor_rect_for_byte_offset(
@@ -2666,7 +2667,7 @@ impl i_slint_core::renderer::RendererSealed for QtWindow {
         item_rc: &i_slint_core::item_tree::ItemRc,
         byte_offset: usize,
     ) -> LogicalRect {
-        sharedparley::text_input_cursor_rect_for_byte_offset(self, text_input, item_rc, byte_offset)
+        textlayout::text_input_cursor_rect_for_byte_offset(self, text_input, item_rc, byte_offset)
     }
 
     fn register_font_from_memory(

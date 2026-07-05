@@ -22,7 +22,7 @@ name = "test-driver-screenshot"
 default = ["skia", "software", "software-embed-assets"]
 # The default software driver renders without pre-rendering resources at compile time: vector fonts
 # (parley) and runtime-decoded images. `configure_test_fonts()` makes that deterministic.
-software = ["slint/renderer-software", "dep:i-slint-compiler", "dep:i-slint-backend-testing"]
+software = ["slint/renderer-software", "i-slint-core/shared-parley", "dep:i-slint-compiler", "dep:i-slint-backend-testing"]
 skia = ["dep:i-slint-renderer-skia", "dep:slint-interpreter"]
 # Additionally render cases with everything pre-rendered at compile time: bitmap fonts and
 # pre-decoded textures (the MCU-style `EmbedTextures` path).
@@ -31,6 +31,7 @@ software-embed-assets = ["software"]
 [dependencies]
 slint = { workspace = true, features = ["std", "compat-1-2"], optional = true }
 i-slint-core = { workspace = true, features = ["unicode", "std"] }
+i-slint-renderer-software = { workspace = true }
 
 i-slint-renderer-skia = { workspace = true, optional = true }
 slint-interpreter = { workspace = true, features = ["display-diagnostics", "compat-1-2"], optional = true }

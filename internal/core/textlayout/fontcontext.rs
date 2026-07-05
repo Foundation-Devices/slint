@@ -73,14 +73,14 @@ impl FontContext {
 
 /// The size of `ch` in the font matched for the item: advance width by line height.
 pub fn char_size(
-    collection: &mut fontique::Collection,
-    source_cache: &mut fontique::SourceCache,
+    font_ctx: &mut FontContext,
     text_item: Pin<&dyn crate::item_rendering::HasFont>,
     item_rc: &crate::item_tree::ItemRc,
     ch: char,
 ) -> Option<LogicalSize> {
     let font_request = text_item.font_request(item_rc);
-    let font = font_request.query_fontique(collection, source_cache)?;
+    let font = font_request
+        .query_fontique(&mut font_ctx.inner.collection, &mut font_ctx.inner.source_cache)?;
 
     let char_map = font.charmap()?;
 
@@ -114,13 +114,14 @@ pub fn char_size(
 
 /// Metrics of the font matched for `font_request`, scaled to its pixel size.
 pub fn font_metrics(
-    collection: &mut fontique::Collection,
-    source_cache: &mut fontique::SourceCache,
+    font_ctx: &mut FontContext,
     font_request: FontRequest,
 ) -> crate::items::FontMetrics {
     let logical_pixel_size = font_request.pixel_size.unwrap_or(DEFAULT_FONT_SIZE).get();
 
-    let Some(font) = font_request.query_fontique(collection, source_cache) else {
+    let Some(font) = font_request
+        .query_fontique(&mut font_ctx.inner.collection, &mut font_ctx.inner.source_cache)
+    else {
         return crate::items::FontMetrics::default();
     };
 

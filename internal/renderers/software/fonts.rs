@@ -6,10 +6,13 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use super::{Fixed, PhysicalLength, PhysicalSize};
+use super::{Fixed, PhysicalLength, PhysicalPoint, PhysicalRect, PhysicalSize};
 use i_slint_core::graphics::{BitmapFont, FontRequest};
-use i_slint_core::lengths::ScaleFactor;
-use i_slint_core::textlayout::TextLayout;
+use i_slint_core::items::{TextOverflow, TextWrap};
+use i_slint_core::lengths::{
+    LogicalLength, LogicalPoint, LogicalRect, LogicalSize, PointLengths, ScaleFactor,
+};
+use i_slint_core::textlayout::{TextLayout, TextParagraphLayout};
 
 i_slint_core::thread_local! {
     static BITMAP_FONTS: RefCell<Vec<&'static BitmapFont>> = RefCell::default()
@@ -227,4 +230,152 @@ where
 
 pub fn register_bitmap_font(font_data: &'static BitmapFont) {
     BITMAP_FONTS.with(|fonts| fonts.borrow_mut().push(font_data))
+}
+
+/// The layout size of `string` in logical pixels, wrapped at `max_width`.
+pub fn text_size_with_font<Font>(
+    font: &Font,
+    font_request: &FontRequest,
+    scale_factor: ScaleFactor,
+    string: &str,
+    max_width: Option<LogicalLength>,
+    text_wrap: TextWrap,
+) -> LogicalSize
+where
+    Font: i_slint_core::textlayout::AbstractFont
+        + i_slint_core::textlayout::TextShaper<Length = PhysicalLength>,
+{
+    let layout = text_layout_for_font(font, font_request, scale_factor);
+    let (longest_line_width, height) = layout.text_size(
+        string,
+        max_width.map(|max_width| (max_width.cast() * scale_factor).cast()),
+        text_wrap,
+    );
+    (PhysicalSize::from_lengths(longest_line_width, height).cast() / scale_factor).cast()
+}
+
+/// The layout size of a single character in logical pixels.
+pub fn char_size_with_font<Font>(
+    font: &Font,
+    font_request: &FontRequest,
+    scale_factor: ScaleFactor,
+    ch: char,
+) -> LogicalSize
+where
+    Font: i_slint_core::textlayout::AbstractFont
+        + i_slint_core::textlayout::TextShaper<Length = PhysicalLength>,
+{
+    let mut buf = [0u8; 4];
+    text_size_with_font(
+        font,
+        font_request,
+        scale_factor,
+        ch.encode_utf8(&mut buf),
+        None,
+        TextWrap::NoWrap,
+    )
+}
+
+/// The font's metrics converted to logical pixels.
+pub fn font_metrics_with_font(
+    font: &impl i_slint_core::textlayout::FontMetrics<PhysicalLength>,
+    scale_factor: ScaleFactor,
+) -> i_slint_core::items::FontMetrics {
+    let ascent: LogicalLength = (font.ascent().cast() / scale_factor).cast();
+    let descent: LogicalLength = (font.descent().cast() / scale_factor).cast();
+    let x_height: LogicalLength = (font.x_height().cast() / scale_factor).cast();
+    let cap_height: LogicalLength = (font.cap_height().cast() / scale_factor).cast();
+
+    i_slint_core::items::FontMetrics {
+        ascent: ascent.get() as _,
+        descent: descent.get() as _,
+        x_height: x_height.get() as _,
+        cap_height: cap_height.get() as _,
+    }
+}
+
+/// The byte offset in the text input's actual text for a click at `pos`.
+pub fn text_input_byte_offset_for_position_with_font<Font>(
+    font: &Font,
+    font_request: &FontRequest,
+    scale_factor: ScaleFactor,
+    text_input: core::pin::Pin<&i_slint_core::items::TextInput>,
+    pos: LogicalPoint,
+) -> usize
+where
+    Font: i_slint_core::textlayout::AbstractFont
+        + i_slint_core::textlayout::TextShaper<Length = PhysicalLength>,
+{
+    let visual_representation = text_input.visual_representation(None);
+
+    let width = (text_input.width().cast() * scale_factor).cast();
+    let height = (text_input.height().cast() * scale_factor).cast();
+
+    let pos = (pos.cast() * scale_factor)
+        .clamp(euclid::point2(0., 0.), euclid::point2(i16::MAX, i16::MAX).cast())
+        .cast();
+
+    let layout = text_layout_for_font(font, font_request, scale_factor);
+
+    let paragraph = TextParagraphLayout {
+        string: &visual_representation.text,
+        layout,
+        max_width: width,
+        max_height: height,
+        horizontal_alignment: text_input.horizontal_alignment(),
+        vertical_alignment: text_input.vertical_alignment(),
+        wrap: text_input.wrap(),
+        overflow: TextOverflow::Clip,
+        single_line: false,
+    };
+
+    visual_representation.map_byte_offset_from_visual_text_to_actual_text(
+        paragraph.byte_offset_for_position((pos.x_length(), pos.y_length())),
+    )
+}
+
+/// The cursor rectangle for a byte offset into the text input, in logical pixels.
+pub fn text_input_cursor_rect_for_byte_offset_with_font<Font>(
+    font: &Font,
+    font_request: &FontRequest,
+    scale_factor: ScaleFactor,
+    text_input: core::pin::Pin<&i_slint_core::items::TextInput>,
+    byte_offset: usize,
+) -> LogicalRect
+where
+    Font: i_slint_core::textlayout::AbstractFont
+        + i_slint_core::textlayout::TextShaper<Length = PhysicalLength>,
+{
+    let visual_representation = text_input.visual_representation(None);
+
+    let width = (text_input.width().cast() * scale_factor).cast();
+    let height = (text_input.height().cast() * scale_factor).cast();
+
+    let layout = text_layout_for_font(font, font_request, scale_factor);
+
+    let paragraph = TextParagraphLayout {
+        string: &visual_representation.text,
+        layout,
+        max_width: width,
+        max_height: height,
+        horizontal_alignment: text_input.horizontal_alignment(),
+        vertical_alignment: text_input.vertical_alignment(),
+        wrap: text_input.wrap(),
+        overflow: TextOverflow::Clip,
+        single_line: false,
+    };
+
+    let cursor_position = paragraph.cursor_pos_for_byte_offset(byte_offset);
+    let cursor_height = font.height();
+
+    (PhysicalRect::new(
+        PhysicalPoint::from_lengths(cursor_position.0, cursor_position.1),
+        PhysicalSize::from_lengths(
+            (text_input.text_cursor_width().cast() * scale_factor).cast(),
+            cursor_height,
+        ),
+    )
+    .cast()
+        / scale_factor)
+        .cast()
 }

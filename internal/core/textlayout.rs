@@ -27,6 +27,8 @@ use alloc::vec::Vec;
 
 use euclid::num::{One, Zero};
 
+#[cfg(all(feature = "shared-fontique", feature = "std"))]
+use crate::item_rendering::HasFont as _;
 use crate::items::{TextHorizontalAlignment, TextOverflow, TextVerticalAlignment, TextWrap};
 
 /// The font size to lay text out with when neither the `.slint` code nor the platform
@@ -60,10 +62,104 @@ mod shaping;
 #[cfg(feature = "shared-parley")]
 /// cbindgen:ignore
 pub mod sharedparley;
+#[cfg(all(feature = "shared-fontique", feature = "std"))]
+/// cbindgen:ignore
+pub mod simpletext;
 #[cfg(feature = "shared-fontique")]
 pub use fontcontext::FontContext;
-use shaping::ShapeBuffer;
-pub use shaping::{AbstractFont, FontMetrics, Glyph, TextShaper};
+
+pub use shaping::{AbstractFont, FontMetrics, Glyph, ShapeBuffer, TextShaper};
+/// The active text engine: parley when the shared-parley feature is on, the
+/// simple engine (mini shaper) otherwise. Both expose the same function surface.
+#[cfg(feature = "shared-parley")]
+pub use sharedparley as engine;
+#[cfg(all(feature = "shared-fontique", feature = "std", not(feature = "shared-parley")))]
+pub use simpletext as engine;
+
+/// Measure the size of a text item with the active engine's font and shaping.
+#[cfg(all(feature = "shared-fontique", feature = "std"))]
+pub fn text_size(
+    renderer: &dyn crate::renderer::RendererSealed,
+    text_item: core::pin::Pin<&dyn crate::item_rendering::RenderString>,
+    item_rc: &crate::item_tree::ItemRc,
+    max_width: Option<crate::lengths::LogicalLength>,
+    text_wrap: TextWrap,
+    cache: Option<&engine::TextLayoutCache>,
+) -> Option<crate::lengths::LogicalSize> {
+    let _ = cache;
+    engine::measure_text_size(renderer, text_item, item_rc, max_width, text_wrap)
+}
+
+/// The byte offset into the text input's actual text for a click at `pos`,
+/// hit-testing the visual text with the active engine's font and shaping.
+#[cfg(all(feature = "shared-fontique", feature = "std"))]
+pub fn text_input_byte_offset_for_position(
+    renderer: &dyn crate::renderer::RendererSealed,
+    text_input: core::pin::Pin<&crate::items::TextInput>,
+    item_rc: &crate::item_tree::ItemRc,
+    pos: crate::lengths::LogicalPoint,
+) -> usize {
+    let Some(scale_factor) = renderer.scale_factor() else {
+        return 0;
+    };
+    let pos = pos * scale_factor;
+    if text_input.width().get() <= 0. || text_input.height().get() <= 0. || pos.y < 0. {
+        return 0;
+    }
+
+    let visual_representation = text_input.visual_representation(None);
+    let Some(byte_offset) = engine::visual_text_byte_offset_for_position(
+        renderer,
+        text_input,
+        item_rc,
+        &visual_representation.text,
+        pos,
+        scale_factor,
+    ) else {
+        return 0;
+    };
+    visual_representation.map_byte_offset_from_visual_text_to_actual_text(byte_offset)
+}
+
+/// The cursor rectangle in logical pixels for a byte offset into the text
+/// input's actual text, hit-testing the visual text with the active engine's
+/// font and shaping.
+#[cfg(all(feature = "shared-fontique", feature = "std"))]
+pub fn text_input_cursor_rect_for_byte_offset(
+    renderer: &dyn crate::renderer::RendererSealed,
+    text_input: core::pin::Pin<&crate::items::TextInput>,
+    item_rc: &crate::item_tree::ItemRc,
+    byte_offset: usize,
+) -> crate::lengths::LogicalRect {
+    let Some(scale_factor) = renderer.scale_factor() else {
+        return Default::default();
+    };
+    if text_input.width().get() <= 0. || text_input.height().get() <= 0. {
+        let font_size = text_input.font_request(item_rc).pixel_size.unwrap_or(DEFAULT_FONT_SIZE);
+        return crate::lengths::LogicalRect::new(
+            Default::default(),
+            crate::lengths::LogicalSize::from_lengths(
+                crate::lengths::LogicalLength::new(1.0),
+                font_size,
+            ),
+        );
+    }
+
+    let visual_representation = text_input.visual_representation(None);
+    let byte_offset = visual_representation.map_byte_offset_from_actual_to_visual_text(byte_offset);
+    let Some(cursor_rect) = engine::visual_text_cursor_rect_for_byte_offset(
+        renderer,
+        text_input,
+        item_rc,
+        &visual_representation.text,
+        byte_offset,
+        text_input.text_cursor_width() * scale_factor,
+        scale_factor,
+    ) else {
+        return Default::default();
+    };
+    cursor_rect / scale_factor
+}
 
 mod linebreaker;
 pub use linebreaker::TextLine;
@@ -122,11 +218,20 @@ pub struct TextParagraphLayout<'a, Font: AbstractFont> {
 }
 
 impl<Font: AbstractFont> TextParagraphLayout<'_, Font> {
-    /// Layout the given string in lines, and call the `layout_line` callback with the line to draw at position y.
+    /// The paragraph's string shaped with its font and letter spacing. Callers
+    /// holding a cache keep the result across [`Self::layout_lines`] calls to
+    /// skip the shaping cost.
+    pub fn shape(&self) -> ShapeBuffer<Font::Length> {
+        ShapeBuffer::new(&self.layout, self.string)
+    }
+
+    /// Layout the string shaped into `shape_buffer` (from [`Self::shape`]) in lines,
+    /// and call the `layout_line` callback with the line to draw at position y.
     /// The signature of the `layout_line` function is: `(glyph_iterator, line_x, line_y, text_line, selection)`.
     /// Returns the baseline y coordinate as Ok, or the break value if `line_callback` returns `core::ops::ControlFlow::Break`.
     pub fn layout_lines<R>(
         &self,
+        shape_buffer: &ShapeBuffer<Font::Length>,
         mut line_callback: impl FnMut(
             &mut dyn Iterator<Item = PositionedGlyph<Font::Length>>,
             Font::Length,
@@ -146,12 +251,10 @@ impl<Font: AbstractFont> TextParagraphLayout<'_, Font> {
         let elide_width = elide_glyph.as_ref().map_or(Font::Length::zero(), |g| g.advance);
         let max_width_without_elision = self.max_width - elide_width;
 
-        let shape_buffer = ShapeBuffer::new(&self.layout, self.string);
-
         let new_line_break_iter = || {
             TextLineBreaker::<Font>::new(
                 self.string,
-                &shape_buffer,
+                shape_buffer,
                 if wrap { Some(self.max_width) } else { None },
                 if elide { Some(self.layout.font.max_lines(self.max_height)) } else { None },
                 self.wrap,
@@ -306,6 +409,7 @@ impl<Font: AbstractFont> TextParagraphLayout<'_, Font> {
         let mut last_line_y = Font::Length::zero();
 
         match self.layout_lines(
+            &self.shape(),
             |glyphs, line_x, line_y, line, _| {
                 last_glyph_right_edge = euclid::approxord::min(
                     self.max_width,
@@ -340,6 +444,7 @@ impl<Font: AbstractFont> TextParagraphLayout<'_, Font> {
         let two = Font::LengthPrimitive::one() + Font::LengthPrimitive::one();
 
         match self.layout_lines(
+            &self.shape(),
             |glyphs, line_x, line_y, line, _| {
                 if pos_y >= line_y + self.layout.font.height() {
                     byte_offset = line.byte_range.end;
@@ -468,6 +573,7 @@ fn test_elision() {
     };
     paragraph
         .layout_lines::<()>(
+            &paragraph.shape(),
             |glyphs, _, _, _, _| {
                 lines.push(
                     glyphs.map(|positioned_glyph| positioned_glyph.glyph_id).collect::<Vec<_>>(),
@@ -510,6 +616,7 @@ fn test_exact_fit() {
     };
     paragraph
         .layout_lines::<()>(
+            &paragraph.shape(),
             |glyphs, _, _, _, _| {
                 lines.push(
                     glyphs.map(|positioned_glyph| positioned_glyph.glyph_id).collect::<Vec<_>>(),
@@ -552,6 +659,7 @@ fn test_no_line_separators_characters_rendered() {
     };
     paragraph
         .layout_lines::<()>(
+            &paragraph.shape(),
             |glyphs, _, _, _, _| {
                 lines.push(
                     glyphs.map(|positioned_glyph| positioned_glyph.glyph_id).collect::<Vec<_>>(),
