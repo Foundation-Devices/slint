@@ -3388,7 +3388,10 @@ mod paragraph_cache {
                 _ => return None,
             }
 
-            let max_size = (size * scale_factor).cast::<u32>();
+            // Keep this identical to the allocation in `draw_text_bitmap_to_cache`.
+            // Truncating here aliases an integer-sized paragraph with a slightly larger
+            // fractional one, allowing the latter to reuse an undersized alpha map.
+            let max_size = bitmap_size(size, scale_factor);
             if bitmap_bytes(&max_size) > max_item_size() {
                 return None;
             }
@@ -3412,6 +3415,27 @@ mod paragraph_cache {
 
     fn bitmap_bytes(size: &euclid::Size2D<u32, PhysicalPx>) -> usize {
         size.width as usize * size.height as usize
+    }
+
+    fn bitmap_size(
+        size: LogicalSize,
+        scale_factor: ScaleFactor,
+    ) -> euclid::Size2D<u32, PhysicalPx> {
+        (size * scale_factor).ceil().cast()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn fractional_paragraph_size_rounds_up_for_the_cache_key() {
+            let integer_size = bitmap_size(LogicalSize::new(175., 29.), ScaleFactor::new(1.));
+            let fractional_size = bitmap_size(LogicalSize::new(175.25, 29.), ScaleFactor::new(1.));
+
+            assert_ne!(integer_size, fractional_size);
+            assert_eq!(fractional_size, euclid::size2(176, 29));
+        }
     }
 
     struct ParagraphWeightScale;
