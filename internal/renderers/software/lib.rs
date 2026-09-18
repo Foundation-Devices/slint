@@ -3388,7 +3388,7 @@ mod paragraph_cache {
                 _ => return None,
             }
 
-            let max_size = (size * scale_factor).cast::<u32>();
+            let max_size = (size * scale_factor).ceil().cast::<u32>();
             if bitmap_bytes(&max_size) > max_item_size() {
                 return None;
             }
